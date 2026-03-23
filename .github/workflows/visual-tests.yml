@@ -1,0 +1,65 @@
+name: Visual Regression Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_baselines:
+        description: 'Update baseline snapshots'
+        required: false
+        default: 'false'
+        type: boolean
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  visual-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run visual tests
+        run: npm run test:visual
+        env:
+          CI: true
+          CCW_VISUAL_UPDATE_BASELINE: ${{ inputs.update_baselines && '1' || '0' }}
+
+      - name: Commit updated baselines
+        if: inputs.update_baselines == true
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add ccw/tests/visual/snapshots/baseline/
+          git diff --staged --quiet || git commit -m "chore: update visual test baselines [skip ci]"
+          git push
+
+      - name: Upload visual artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-regression-artifacts
+          path: |
+            ccw/tests/visual/snapshots/current
+            ccw/tests/visual/snapshots/diff
+          retention-days: 7

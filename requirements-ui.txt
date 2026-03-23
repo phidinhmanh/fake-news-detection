@@ -1,0 +1,7 @@
+# Người C: Streamlit UI dependencies
+pydantic>=2.0
+python-dotenv>=1.0
+streamlit>=1.32
+requests>=2.31
+plotly>=5.20
+pytest>=8.0

@@ -1,0 +1,147 @@
+name: Release Canary
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.claude/**'
+  workflow_dispatch:
+    inputs:
+      commit_threshold:
+        description: 'Commits needed for canary release'
+        required: false
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  COMMIT_THRESHOLD: ${{ github.event.inputs.commit_threshold || '20' }}
+
+jobs:
+  # 检查是否需要发布预览版
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      commit_count: ${{ steps.check.outputs.commit_count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+
+      - name: Check commit count
+        id: check
+        run: |
+          # Get last release tag (not canary)
+          LAST_TAG=$(git tag -l 'v*' | grep -v canary | sort -V | tail -1 || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            # No release tags, count all commits
+            COMMIT_COUNT=$(git rev-list --count HEAD)
+          else
+            # Count commits since last release
+            COMMIT_COUNT=$(git rev-list --count ${LAST_TAG}..HEAD)
+          fi
+
+          THRESHOLD=${{ env.COMMIT_THRESHOLD }}
+
+          echo "📊 Commits since last release: ${COMMIT_COUNT}"
+          echo "🎯 Threshold: ${THRESHOLD}"
+          echo "commit_count=${COMMIT_COUNT}" >> $GITHUB_OUTPUT
+
+          # Release canary when threshold reached
+          if [ "$COMMIT_COUNT" -ge "$THRESHOLD" ]; then
+            echo "✅ Reached ${THRESHOLD} commits threshold, will release canary"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            REMAINING=$((THRESHOLD - COMMIT_COUNT))
+            echo "⏭️ ${REMAINING} more commits needed for next canary"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  # 发布预览版
+  canary:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+        continue-on-error: false
+
+      - name: Build
+        run: npm run build
+
+      - name: Generate canary version
+        id: version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TIMESTAMP=$(git log -1 --format=%cd --date=format:%Y%m%d%H%M%S)
+
+          # Canary version: 6.3.54-canary.20260227123456.abc1234
+          CANARY_VERSION="${CURRENT_VERSION}-canary.${TIMESTAMP}.${SHORT_SHA}"
+
+          echo "canary_version=${CANARY_VERSION}" >> $GITHUB_OUTPUT
+          echo "📦 Canary version: ${CANARY_VERSION}"
+
+          npm version ${CANARY_VERSION} --no-git-tag-version --allow-same-version
+
+      - name: Run prepublish checks
+        run: node ccw/scripts/prepublish-clean.mjs
+
+      - name: Publish canary to npm
+        run: npm publish --tag canary --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Summary
+        run: |
+          echo "### 🚀 Canary Release Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${{ steps.version.outputs.canary_version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commits**: ${{ needs.check-release.outputs.commit_count }} since last release" >> $GITHUB_STEP_SUMMARY
+          echo "- **Install**: \`npm install claude-code-workflow@canary\`" >> $GITHUB_STEP_SUMMARY
+
+  # 跳过时的通知
+  skip-notice:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Skip notice
+        run: |
+          COMMIT_COUNT=${{ needs.check-release.outputs.commit_count }}
+          THRESHOLD=${{ env.COMMIT_THRESHOLD }}
+          REMAINING=$((THRESHOLD - COMMIT_COUNT))
+
+          echo "### ⏭️ Canary Release Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commits**: ${COMMIT_COUNT}/${THRESHOLD}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Remaining**: ${REMAINING} more commits needed" >> $GITHUB_STEP_SUMMARY

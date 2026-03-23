@@ -1,0 +1,75 @@
+# Fake News Detection System
+# ──────────────────────────
+
+# ── Python ─────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ── Virtual Environment ───────────────────────────────
+venv/
+.venv/
+env/
+.env
+
+# ── IDE ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── Data (large files — không commit lên GitHub) ──────
+data/raw_data/
+data/datasets/normalized/*.parquet
+data/datasets/augmented/*.parquet
+*.parquet
+*.csv
+!data/datasets/*.csv.sample   # Cho phép sample files
+
+# ── Model artifacts (quá lớn cho git) ─────────────────
+models/
+*.pkl
+*.pt
+*.bin
+*.onnx
+*.safetensors
+mlruns/
+wandb/
+
+# ── Logs ───────────────────────────────────────────────
+*.log
+logs/
+lightning_logs/
+
+# ── OS ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Jupyter ────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Scrapy ─────────────────────────────────────────────
+.scrapy/
+
+# ── Streamlit ──────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Environment ───────────────────────────────────────
+.env
+.env.local
+.env.production
+
+# ── Coverage ──────────────────────────────────────────
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+
+.claude/
