@@ -16,53 +16,44 @@ TODO (Tuần 3-4):
 
 from __future__ import annotations
 
-# import lightning as L
-# import torch
-# from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
+import lightning as L
+import torch
+from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-# from config import DEFAULT_BATCH_SIZE, NORMALIZED_DIR
-
-
-# class FakeNewsDataset(Dataset):
-#     """Dataset cho Fake News Detection.
-#
-#     Args:
-#         data_dir: Path tới thư mục chứa parquet files.
-#         split: 'train', 'val', hoặc 'test'.
-#         max_length: Maximum sequence length.
-#     """
-#
-#     def __init__(self, data_dir, split="train", max_length=256):
-#         raise NotImplementedError("Người A implement")
-#
-#     def __len__(self):
-#         raise NotImplementedError
-#
-#     def __getitem__(self, idx):
-#         raise NotImplementedError
+from config import DEFAULT_BATCH_SIZE, NORMALIZED_DIR
+from data.dataset import FakeNewsDataset
 
 
-# class FakeNewsDataModule(L.LightningDataModule):
-#     """Lightning DataModule cho Fake News Detection.
-#
-#     Người B sẽ import class này để training:
-#         from data.datamodule import FakeNewsDataModule
-#         dm = FakeNewsDataModule(batch_size=32)
-#         trainer.fit(model, dm)
-#     """
-#
-#     def __init__(self, batch_size=DEFAULT_BATCH_SIZE):
-#         super().__init__()
-#         self.batch_size = batch_size
-#
-#     def setup(self, stage=None):
-#         raise NotImplementedError("Người A implement")
-#
-#     def train_dataloader(self):
-#         raise NotImplementedError
-#
-#     def val_dataloader(self):
-#         raise NotImplementedError
-#
-#     def test_dataloader(self):
-#         raise NotImplementedError
+class FakeNewsDataModule(L.LightningDataModule):
+    """Lightning DataModule cho Fake News Detection.
+
+    Người B sẽ import class này để training:
+        from data.datamodule import FakeNewsDataModule
+        dm = FakeNewsDataModule(batch_size=32)
+        trainer.fit(model, dm)
+    """
+
+    def __init__(self, batch_size=DEFAULT_BATCH_SIZE):
+        super().__init__()
+        self.batch_size = batch_size
+        self.train_dataset = None
+        self.val_dataset = None
+        self.test_dataset = None
+
+    def setup(self, stage=None):
+        """Setup datasets for each stage."""
+        if stage == "fit" or stage is None:
+            self.train_dataset = FakeNewsDataset(split="train")
+            self.val_dataset = FakeNewsDataset(split="val")
+
+        if stage == "test" or stage is None:
+            self.test_dataset = FakeNewsDataset(split="test")
+
+    def train_dataloader(self):
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_dataset, batch_size=self.batch_size)

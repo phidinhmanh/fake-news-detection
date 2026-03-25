@@ -73,3 +73,6 @@ coverage.xml
 
 
 .claude/
+.workflow/
+
+CLAUDE.md
