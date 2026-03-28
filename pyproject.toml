@@ -26,4 +26,18 @@ dependencies = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.11.0",
     "pytest-asyncio>=0.21.0",
+    "lightning>=2.2.0",
+    "peft>=0.10.0",
+    "shap>=0.45.0",
+    "accelerate>=0.28.0",
+    "evaluate>=0.4.0",
+    "sentencepiece>=0.2.0",
+    "crewai>=0.28.0",
+    "langchain-google-genai>=1.0.0",
+    "lancedb<0.18.0",
+]
+
+[tool.uv]
+required-environments = [
+    "sys_platform == 'win32' and platform_machine == 'AMD64'"
 ]

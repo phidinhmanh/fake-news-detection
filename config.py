@@ -45,3 +45,19 @@ TARGET_BASELINE_F1 = 0.72
 TARGET_LORA_F1 = 0.85
 TARGET_ENSEMBLE_AUC = 0.90
 TARGET_LATENCY_SECONDS = 3.0
+
+# ── Sequential Adversarial Pipeline ────────────────────────────────────────────
+SA_DIR = PROJECT_ROOT / "sequential_adversarial"
+
+# Gemini model to use (can be overridden by GOOGLE_GEMINI_MODEL env var)
+import os as _os
+SA_MODEL_NAME = _os.getenv("GOOGLE_GEMINI_MODEL", "gemini-1.5-flash")
+
+# SQLite database for persistence (Stage 7)
+SA_DB_PATH = SA_DIR / "data" / "verity_reports.db"
+
+# Output directory for Mermaid visual flowcharts (Stage 6)
+SA_VISUAL_DIR = SA_DIR / "data" / "visuals"
+
+# Max text length fed to the LLM pipeline
+SA_MAX_TEXT_CHARS = 8_000

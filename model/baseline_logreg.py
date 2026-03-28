@@ -36,8 +36,9 @@ class BaselineLogReg:
         y = val_df['label']
         y_pred = self.pipeline.predict(X)
 
-        # pos_label=1 vì 1 = fake (positive class)
-        f1 = f1_score(y, y_pred, pos_label=1, average='binary')
+        # Mapping string labels to binary for F1 calculation if needed
+        # Assuming LABELS[0] is 'fake' (positive class)
+        f1 = f1_score(y, y_pred, pos_label='fake', average='binary')
         report = classification_report(y, y_pred)
 
         print(f"Validation F1-score: {f1:.4f}")
@@ -57,40 +58,68 @@ class BaselineLogReg:
         self.pipeline = joblib.load(self.model_path)
         print(f"Model loaded from {self.model_path}")
 
-def train(max_features=5000):
-    """Train TF-IDF + Logistic Regression baseline model.
+    def predict_with_score(self, text: str) -> dict:
+        """
+        Predict label and return confidence scores.
 
-    Args:
-        max_features: Max TF-IDF features (default 5000)
+        Args:
+            text: Raw input text.
 
-    Returns:
-        BaselineLogReg: Trained model
-    """
-    from data.dataset import FakeNewsDataset
+        Returns:
+            dict with keys:
+              - label (str): predicted class ('fake' or 'real')
+              - confidence (float 0-1): probability of predicted class
+              - fake_proba (float): P(fake)
+              - real_proba (float): P(real)
+        """
+        proba = self.pipeline.predict_proba([text])[0]
+        classes = self.pipeline.classes_
+        pred_idx = proba.argmax()          # index of highest probability
+        pred_label = classes[pred_idx]
+        confidence = float(proba.max())
 
-    print("Loading data...")
-    train_dataset = FakeNewsDataset(split="train")
-    val_dataset = FakeNewsDataset(split="val")
+        # Map probabilities to class names
+        if len(classes) == 2 and set(classes) == {'fake', 'real'}:
+            fake_proba = float(proba[list(classes).index('fake')])
+            real_proba = float(proba[list(classes).index('real')])
+        else:
+            fake_proba = float(proba[0]) if len(proba) >= 1 else 0.0
+            real_proba = float(proba[-1]) if len(proba) >= 2 else 0.0
 
-    if len(train_dataset) == 0:
-        raise RuntimeError("No training data found. Run create_mock_data.py first.")
-
-    train_df = train_dataset.df
-    val_df = val_dataset.df
-
-    print(f"Train: {len(train_df)} | Val: {len(val_df)}")
-
-    model = BaselineLogReg(max_features=max_features)
-    model.train(train_df)
-    f1 = model.evaluate(val_df)
-
-    model.save()
-    print(f"\n{'='*50}")
-    print(f"Baseline F1: {f1:.4f} | Target: {TARGET_BASELINE_F1}")
-    print(f"{'='*50}")
-
-    return model
-
+        return {
+            "label": pred_label,
+            "confidence": confidence,
+            "fake_proba": fake_proba,
+            "real_proba": real_proba,
+        }
 
 if __name__ == "__main__":
-    train()
+    # Example usage (requires data)
+    import sys
+    import os
+    from data.datamodule import FakeNewsDataModule
+
+    try:
+        # Load datasets using our FakeNewsDataset class
+        train_dataset = FakeNewsDataset(split="train")
+        val_dataset = FakeNewsDataset(split="val")
+
+        if len(train_dataset) == 0:
+            print("No data found in normalized directory. Please run IMPL-B-001 first.")
+            sys.exit(0)
+
+        train_df = train_dataset.df
+        val_df = val_dataset.df
+
+        model = BaselineLogReg()
+        model.train(train_df)
+        f1 = model.evaluate(val_df)
+
+        if f1 >= TARGET_BASELINE_F1:
+            print(f"Success! F1-score {f1:.4f} >= Target {TARGET_BASELINE_F1}")
+            model.save()
+        else:
+            print(f"Warning: F1-score {f1:.4f} < Target {TARGET_BASELINE_F1}")
+
+    except Exception as e:
+        print(f"Error: {e}")
