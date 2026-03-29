@@ -65,6 +65,11 @@ Thumbs.db
 .env.local
 .env.production
 
+# ── Project-specific ─────────────────────────────────
+api/
+saved_models/
+pytest_err.log
+
 # ── Coverage ──────────────────────────────────────────
 htmlcov/
 .coverage
