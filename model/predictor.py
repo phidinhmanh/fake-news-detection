@@ -26,7 +26,7 @@ import warnings
 import torch
 import numpy as np
 
-from schemas import PredictRequest, PredictResponse
+from api.schemas import PredictRequest, PredictResponse
 from config import MODELS_ARTIFACTS_DIR, DOMAINS, TARGET_LATENCY_SECONDS
 
 # Import ensemble classifier

@@ -51,8 +51,11 @@ class InputProcessor:
     def _detect_type(self, source: str) -> str:
         if re.match(r"^https?://", source, re.IGNORECASE):
             return "url"
-        if Path(source).exists():
-            return "file"
+        try:
+            if Path(source).is_file():
+                return "file"
+        except Exception:
+            pass
         return "raw"
 
     # ── URL handler ────────────────────────────────────────────────────────────
@@ -82,7 +85,8 @@ class InputProcessor:
             import httpx  # type: ignore
             from html.parser import HTMLParser
 
-            response = httpx.get(url, timeout=10, follow_redirects=True)
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+            response = httpx.get(url, timeout=10, follow_redirects=True, headers=headers)
             response.raise_for_status()
             text = self._strip_html(response.text)
             domain = re.sub(r"https?://(www\.)?([^/]+).*", r"\2", url)

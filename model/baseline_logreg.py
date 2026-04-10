@@ -11,7 +11,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import f1_score, classification_report
 
-from config import MODELS_ARTIFACTS_DIR, TARGET_BASELINE_F1, LABELS
+from config import MODELS_ARTIFACTS_DIR, TARGET_BASELINE_F1
 
 class BaselineLogReg:
     """Baseline model using TF-IDF and Logistic Regression."""

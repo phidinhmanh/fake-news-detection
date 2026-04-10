@@ -1,0 +1,39 @@
+==================================================
+--- PIPELINE EXECUTION RESULT ---
+==================================================
+Source: https://thehackernews.com/
+URL Extracted Text (first 200 chars): TeamPCP Pushes Malicious Telnyx Versions to PyPI, Hides Stealer in WAV Files
+Mar 27, 2026
+Cybersecurity / Malware
+TeamPCP, the threat actor behind the supply chain attack targeting Trivy , KICS , and ...
+Overall Manipulation Score: 0.3
+
+CONCLUSION: Mixed
+CONFIDENCE: 0.8
+
+--- Verity Report ---
+# Verity Report: Telnyx Python Package Compromise
+
+## Conclusion
+**Mixed**
+
+## Confidence
+0.8
+
+## Evidence Summary
+Multiple high-reliability sources strongly support the claims that the `telnyx` Python package was compromised by TeamPCP, with malicious versions 4.87.1 and 4.87.2 pushed to PyPI on March 27, 2026. These versions contained credential harvesting capabilities concealed within a .WAV file, and the malicious code was injected into `telnyx/_client.py` to execute upon package import. However, the claim regarding the PyPI project being "currently quarantined" is mixed, with conflicting information from PyPI itself: one source indicates it is quarantined, while another shows the project page as active and available.
+
+## Bias Summary
+The initial investigation data presented a high-alert cybersecurity threat narrative, emphasizing malicious actors and ongoing risks. A distortion was detected, specifically "False certainty / Outdated information," primarily concerning the definitive statement about the PyPI project being "currently quarantined." Analyst blind spots included not explicitly highlighting this statement as potentially false or outdated, a lack of explicit scrutiny regarding the certainty and methodology of the "TeamPCP" attribution, and not critically assessing how the listing of multiple prior attacks might cumulatively inflate the perceived scale or urgency of the Telnyx incident.
+
+## Key Findings
+*   TeamPCP, a known threat actor, compromised the `telnyx` Python package.
+*   Two malicious versions, 4.87.1 and 4.87.2, were published to PyPI on March 27, 2026.
+*   These versions concealed credential harvesting capabilities within a .WAV file.
+*   The malicious code was injected into `telnyx/_client.py`, ensuring execution upon package import.
+*   The status of the `telnyx` PyPI project being "currently quarantined" is uncertain, with conflicting evidence from PyPI's own platforms.
+
+--- TF-IDF Baseline Comparison ---
+
+Visual Flowchart saved at: D:\Work\project UET\fake-new-detection\sequential_adversarial\data\visuals\verity_flowchart_20260329_150649.md
+Saved to DB with ID: db_10

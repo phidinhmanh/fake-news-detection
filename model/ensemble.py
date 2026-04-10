@@ -75,12 +75,7 @@ class EnsembleClassifier:
         self.device = device
         self.label_map = {i: label for i, label in enumerate(LABELS)}
 
-        # Default weights (can be optimized via grid search or meta-learning)
-        self.weights = weights or {"lora": 0.7, "baseline": 0.3}
-
-        # Normalize weights to sum to 1
-        total_weight = sum(self.weights.values())
-        self.weights = {k: v / total_weight for k, v in self.weights.items()}
+        self.weights = self._normalize_weights(weights or {"lora": 0.7, "baseline": 0.3})
 
         # Initialize models
         self.lora_model = None
@@ -93,6 +88,12 @@ class EnsembleClassifier:
 
         if baseline_model_path:
             self._load_baseline_model(baseline_model_path)
+
+    @staticmethod
+    def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
+        """Normalize weights to sum to 1.0."""
+        total = sum(weights.values())
+        return {k: v / total for k, v in weights.items()}
 
     def _load_lora_model(self, model_path: str | Path) -> None:
         """Load LoRA fine-tuned model.
@@ -247,13 +248,8 @@ class EnsembleClassifier:
         return probs
 
     def set_weights(self, weights: dict[str, float]) -> None:
-        """Update ensemble weights.
-
-        Args:
-            weights: Dictionary with model weights {'lora': w1, 'baseline': w2}.
-        """
-        total_weight = sum(weights.values())
-        self.weights = {k: v / total_weight for k, v in weights.items()}
+        """Update ensemble weights."""
+        self.weights = self._normalize_weights(weights)
         print(f"Updated weights: {self.weights}")
 
     def optimize_weights(

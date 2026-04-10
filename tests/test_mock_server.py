@@ -8,8 +8,8 @@ Chạy: pytest tests/test_mock_server.py -v
 import pytest
 from fastapi.testclient import TestClient
 
-from mock_server import app
-from schemas import PredictResponse
+from api.mock import app
+from api.schemas import PredictResponse
 
 
 @pytest.fixture

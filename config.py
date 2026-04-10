@@ -16,7 +16,7 @@ NORMALIZED_DIR = DATASETS_DIR / "normalized"
 AUGMENTED_DIR = DATASETS_DIR / "augmented"
 
 MODEL_DIR = PROJECT_ROOT / "model"
-MODELS_ARTIFACTS_DIR = PROJECT_ROOT / "models"  # Trained model artifacts
+MODELS_ARTIFACTS_DIR = PROJECT_ROOT / "saved_models"  # Trained model artifacts
 
 UI_DIR = PROJECT_ROOT / "ui"
 

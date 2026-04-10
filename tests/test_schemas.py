@@ -6,7 +6,7 @@ Chạy: pytest tests/test_schemas.py -v
 """
 
 import pytest
-from schemas import PredictRequest, PredictResponse
+from api.schemas import PredictRequest, PredictResponse
 
 
 class TestPredictRequest:

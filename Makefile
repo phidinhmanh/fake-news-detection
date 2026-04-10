@@ -11,18 +11,9 @@ help: ## Hiển thị các lệnh available
 install: ## Cài tất cả dependencies
 	uv sync
 
-install-data: ## Cài dependencies cho Người A (Data)
-	uv pip install -r requirements-data.txt
-
-install-model: ## Cài dependencies cho Người B (Model)
-	uv pip install -r requirements-model.txt
-
-install-ui: ## Cài dependencies cho Người C (UI)
-	uv pip install -r requirements-ui.txt
-
 # ── Development ────────────────────────────────────────
 mock: ## Chạy mock server trên port 8000
-	uv run uvicorn mock_server:app --port 8000 --reload
+	uv run uvicorn api.mock:app --port 8000 --reload
 
 ui: ## Chạy Streamlit app
 	uv run streamlit run ui/app.py

@@ -145,6 +145,30 @@ class LLMClient:
         """Return a canned mock response for the given stage."""
         return _MOCK_RESPONSES.get(stage_key, json.dumps({"error": "unknown stage", "mock": True}))
 
+    def generate_structured(self, prompt: str, schema: type, stage_key: str = "") -> any:
+        """
+        Calls the LLM and strictly parses the output into a predefined Pydantic model (`schema`).
+        Handles failures gracefully by returning raw JSON data that pipeline.py will catch,
+        or throwing explicit errors for bad parsing.
+        
+        Args:
+            prompt: Original prompt instructing JSON schema.
+            schema: Pydantic BaseModel class (e.g. InvestigationResult).
+            stage_key: Used for mock responses.
+            
+        Returns:
+            An instantiated Pydantic model object, strictly conforming to the schema.
+        """
+        schema_json = json.dumps(schema.model_json_schema(), indent=2)
+        full_prompt = f"{prompt}\n\nIMPORTANT: You must return valid JSON that strictly adheres to the following schema:\n{schema_json}"
+        
+        raw_text = self.generate(full_prompt, stage_key)
+        data_dict = extract_json(raw_text)
+        
+        # Biến dictionary thành Pydantic Model (Tự động validate cấu trúc)
+        # Nếu LLM trả về JSON bị thiếu / móp méo trường, schema(**data_dict) sẽ tốn throw ValueError.
+        return schema(**data_dict)
+
     @property
     def is_mock(self) -> bool:
         return self.mock

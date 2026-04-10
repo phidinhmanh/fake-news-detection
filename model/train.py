@@ -99,6 +99,20 @@ class FakeNewsClassifier(L.LightningModule):
         self.validation_step_outputs = []
         self.test_step_outputs = []
 
+    # ========== Helper method for metrics computation ==========
+    def _compute_metrics(self, outputs: list) -> dict:
+        """Compute metrics from step outputs. Reused across train/val/test."""
+        if not outputs:
+            return {}
+        all_preds = torch.cat([x["preds"] for x in outputs]).cpu().numpy()
+        all_labels = torch.cat([x["labels"] for x in outputs]).cpu().numpy()
+        return {
+            "accuracy": accuracy_score(all_labels, all_preds),
+            "f1": f1_score(all_labels, all_preds, average="binary", zero_division=0),
+            "precision": precision_score(all_labels, all_preds, average="binary", zero_division=0),
+            "recall": recall_score(all_labels, all_preds, average="binary", zero_division=0),
+        }
+
     def forward(self, input_ids, attention_mask, labels=None):
         """Forward pass through the model."""
         return self.model(
@@ -133,28 +147,9 @@ class FakeNewsClassifier(L.LightningModule):
 
     def on_train_epoch_end(self):
         """Compute metrics at the end of training epoch."""
-        if not self.training_step_outputs:
-            return
-
-        all_preds = torch.cat([x["preds"] for x in self.training_step_outputs])
-        all_labels = torch.cat([x["labels"] for x in self.training_step_outputs])
-
-        all_preds = all_preds.cpu().numpy()
-        all_labels = all_labels.cpu().numpy()
-
-        # Compute metrics
-        acc = accuracy_score(all_labels, all_preds)
-        f1 = f1_score(all_labels, all_preds, average="binary", zero_division=0)
-        precision = precision_score(all_labels, all_preds, average="binary", zero_division=0)
-        recall = recall_score(all_labels, all_preds, average="binary", zero_division=0)
-
-        # Log metrics
-        self.log("train_acc", acc, prog_bar=True)
-        self.log("train_f1", f1, prog_bar=True)
-        self.log("train_precision", precision)
-        self.log("train_recall", recall)
-
-        # Clear outputs
+        metrics = self._compute_metrics(self.training_step_outputs)
+        if metrics:
+            self.log_dict({f"train_{k}": v for k, v in metrics.items()}, prog_bar=True)
         self.training_step_outputs.clear()
 
     def validation_step(self, batch, batch_idx):
@@ -183,28 +178,9 @@ class FakeNewsClassifier(L.LightningModule):
 
     def on_validation_epoch_end(self):
         """Compute metrics at the end of validation epoch."""
-        if not self.validation_step_outputs:
-            return
-
-        all_preds = torch.cat([x["preds"] for x in self.validation_step_outputs])
-        all_labels = torch.cat([x["labels"] for x in self.validation_step_outputs])
-
-        all_preds = all_preds.cpu().numpy()
-        all_labels = all_labels.cpu().numpy()
-
-        # Compute metrics
-        acc = accuracy_score(all_labels, all_preds)
-        f1 = f1_score(all_labels, all_preds, average="binary", zero_division=0)
-        precision = precision_score(all_labels, all_preds, average="binary", zero_division=0)
-        recall = recall_score(all_labels, all_preds, average="binary", zero_division=0)
-
-        # Log metrics
-        self.log("val_acc", acc, prog_bar=True)
-        self.log("val_f1", f1, prog_bar=True)
-        self.log("val_precision", precision)
-        self.log("val_recall", recall)
-
-        # Clear outputs
+        metrics = self._compute_metrics(self.validation_step_outputs)
+        if metrics:
+            self.log_dict({f"val_{k}": v for k, v in metrics.items()}, prog_bar=True)
         self.validation_step_outputs.clear()
 
     def test_step(self, batch, batch_idx):
@@ -230,37 +206,15 @@ class FakeNewsClassifier(L.LightningModule):
 
     def on_test_epoch_end(self):
         """Compute metrics at the end of test epoch."""
-        if not self.test_step_outputs:
-            return
-
-        all_preds = torch.cat([x["preds"] for x in self.test_step_outputs])
-        all_labels = torch.cat([x["labels"] for x in self.test_step_outputs])
-
-        all_preds = all_preds.cpu().numpy()
-        all_labels = all_labels.cpu().numpy()
-
-        # Compute metrics
-        acc = accuracy_score(all_labels, all_preds)
-        f1 = f1_score(all_labels, all_preds, average="binary", zero_division=0)
-        precision = precision_score(all_labels, all_preds, average="binary", zero_division=0)
-        recall = recall_score(all_labels, all_preds, average="binary", zero_division=0)
-
-        # Log metrics
-        self.log("test_acc", acc)
-        self.log("test_f1", f1)
-        self.log("test_precision", precision)
-        self.log("test_recall", recall)
-
-        # Print results
-        print(f"\n{'='*60}")
-        print(f"Test Results:")
-        print(f"  Accuracy:  {acc:.4f}")
-        print(f"  F1 Score:  {f1:.4f}")
-        print(f"  Precision: {precision:.4f}")
-        print(f"  Recall:    {recall:.4f}")
-        print(f"{'='*60}\n")
-
-        # Clear outputs
+        metrics = self._compute_metrics(self.test_step_outputs)
+        if metrics:
+            self.log_dict({f"test_{k}": v for k, v in metrics.items()})
+            # Print results
+            print(f"\n{'='*60}")
+            print(f"Test Results:")
+            for k, v in metrics.items():
+                print(f"  {k.capitalize()}: {v:.4f}")
+            print(f"{'='*60}\n")
         self.test_step_outputs.clear()
 
     def configure_optimizers(self):

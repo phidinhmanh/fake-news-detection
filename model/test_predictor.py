@@ -24,7 +24,7 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 import time
-from schemas import PredictRequest, PredictResponse
+from api.schemas import PredictRequest, PredictResponse
 from model.predictor import Predictor, load_predictor
 from config import DOMAINS, TARGET_LATENCY_SECONDS
 

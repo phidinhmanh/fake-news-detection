@@ -14,7 +14,7 @@ Nhiệm vụ: Sử dụng Search Tool (Serper/Google Search) để đối soát.
 Action: Tìm ít nhất 3-5 nguồn tin độc lập. Nếu là tin tài chính, nó phải đối chiếu với dữ liệu từ các sàn giao dịch hoặc báo cáo quản trị chính thống.
 
 Giai đoạn 4: Bias Auditor (Kẻ phản biện)
-Nhiệm vụ: Kiểm tra "Frame" (Khung định kiến).
+Nhiệm vụ: Kiểm tra "Frame" (Khung định kiến).w
 
 Adversarial Logic: Đây là bước quan trọng nhất. Agent này sẽ tranh luận với kết quả của Analyst để tìm ra liệu sự thật có đang bị bóp méo bởi ý đồ chính trị hay kinh tế không.
 
