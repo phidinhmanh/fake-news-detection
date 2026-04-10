@@ -38,7 +38,7 @@ class BaselineLogReg:
 
         # Mapping string labels to binary for F1 calculation if needed
         # Assuming LABELS[0] is 'fake' (positive class)
-        f1 = f1_score(y, y_pred, pos_label='fake', average='binary')
+        f1 = f1_score(y, y_pred, pos_label=1, average='binary')
         report = classification_report(y, y_pred)
 
         print(f"Validation F1-score: {f1:.4f}")
