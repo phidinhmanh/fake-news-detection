@@ -16,6 +16,9 @@ TODO (Tuần 3-4):
 
 from __future__ import annotations
 
+import sys
+sys.path.append('.')  # FIX: add current directory to import path
+
 import lightning as L
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler

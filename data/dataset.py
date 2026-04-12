@@ -6,6 +6,9 @@ Implemented for Task IMPL-B-001.
 
 from __future__ import annotations
 
+import sys
+sys.path.append('.')  # FIX: add current directory to import path
+
 import os
 from pathlib import Path
 from typing import Literal

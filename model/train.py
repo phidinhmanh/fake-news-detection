@@ -17,6 +17,9 @@ Usage:
 
 from __future__ import annotations
 
+import sys
+sys.path.append('.')  # FIX: add current directory to import path
+
 import argparse
 from pathlib import Path
 from typing import Any, Dict, Optional
