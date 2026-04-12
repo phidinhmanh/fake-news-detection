@@ -17,8 +17,12 @@ Usage:
 
 from __future__ import annotations
 
+import pathlib
 import sys
-sys.path.append('.')  # FIX: add current directory to import path
+
+_project_root = pathlib.Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 
 import argparse
 from pathlib import Path
@@ -45,6 +49,7 @@ from config import (
     TARGET_LORA_F1,
 )
 from data.datamodule import FakeNewsDataModule
+from data.preprocessing import preprocess_to_normalized
 
 
 class FakeNewsClassifier(L.LightningModule):
@@ -534,6 +539,11 @@ def main():
         default=None,
         help="Override number of epochs from config",
     )
+    parser.add_argument(
+        "--preprocess-raw",
+        action="store_true",
+        help="Preprocess raw CSV data to parquet before training",
+    )
 
     args = parser.parse_args()
 
@@ -570,6 +580,19 @@ def main():
     # Create artifacts directory
     MODELS_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     (MODELS_ARTIFACTS_DIR / "checkpoints").mkdir(parents=True, exist_ok=True)
+
+    # Preprocess raw data if requested
+    if args.preprocess_raw:
+        print("\n" + "="*60)
+        print("Preprocessing raw data to normalized parquet")
+        print("="*60 + "\n")
+        from data.preprocessing import NORMALIZED_DIR as _norm_dir
+
+        if not _norm_dir.exists() or not any(_norm_dir.glob("*.parquet")):
+            preprocess_to_normalized()
+            print()
+        else:
+            print(f"Normalized data already exists in {_norm_dir}, skipping preprocessing.\n")
 
     # Initialize datamodule
     datamodule = FakeNewsDataModule(batch_size=config["training"]["batch_size"])

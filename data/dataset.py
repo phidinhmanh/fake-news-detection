@@ -6,8 +6,12 @@ Implemented for Task IMPL-B-001.
 
 from __future__ import annotations
 
+import pathlib
 import sys
-sys.path.append('.')  # FIX: add current directory to import path
+
+_project_root = pathlib.Path(__file__).resolve().parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
 
 import os
 from pathlib import Path
