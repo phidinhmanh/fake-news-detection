@@ -1,40 +1,63 @@
 [project]
 name = "fake-new-detection"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Vietnamese Fake News Detection with PhoBERT + LLM Agent Pipeline"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    # ── Core ──────────────────────────────────────────
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.27.0",
     "pydantic>=2.5.0",
     "numpy>=1.26.0",
     "pandas>=2.1.0",
     "scikit-learn>=1.3.0",
-    "tensorflow>=2.13.0",
     "torch>=2.0.0",
     "transformers>=4.30.0",
-    "nltk>=3.8.0",
-    "spacy>=3.5.0",
+
+    # ── Vietnamese NLP ────────────────────────────────
+    "underthesea>=6.8.0",
+    "langdetect>=1.0.9",
+
+    # ── Dataset & Preprocessing ───────────────────────
+    "datasets>=2.18.0",
     "beautifulsoup4>=4.12.0",
     "requests>=2.31.0",
+
+    # ── LLM & Agent ───────────────────────────────────
+    "google-generativeai>=0.5.0",
+    "sentence-transformers>=2.6.0",
+    "lancedb<0.18.0",
+    "langchain-google-genai>=1.0.0",
+
+    # ── Visualization ─────────────────────────────────
     "matplotlib>=3.7.0",
     "seaborn>=0.12.0",
     "plotly>=5.14.0",
-    "jupyter>=1.0.0",
+    "wordcloud>=1.9.0",
+
+    # ── UI ────────────────────────────────────────────
+    "streamlit>=1.32.0",
+
+    # ── Training & Evaluation ─────────────────────────
+    "lightning>=2.2.0",
+    "peft>=0.10.0",
+    "accelerate>=0.28.0",
+    "evaluate>=0.4.0",
+    "sentencepiece>=0.2.0",
+
+    # ── NLP Tools ─────────────────────────────────────
+    "nltk>=3.8.0",
+
+    # ── Testing ───────────────────────────────────────
     "pytest>=7.4.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.11.0",
     "pytest-asyncio>=0.21.0",
-    "lightning>=2.2.0",
-    "peft>=0.10.0",
-    "shap>=0.45.0",
-    "accelerate>=0.28.0",
-    "evaluate>=0.4.0",
-    "sentencepiece>=0.2.0",
-    "crewai>=0.28.0",
-    "langchain-google-genai>=1.0.0",
-    "lancedb<0.18.0",
+
+    # ── Misc ──────────────────────────────────────────
+    "joblib>=1.3.0",
+    "jupyter>=1.0.0",
 ]
 
 [tool.uv]

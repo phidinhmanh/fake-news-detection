@@ -70,6 +70,19 @@ api/
 saved_models/
 pytest_err.log
 
+# ── Dataset Pipeline (Vietnamese) ────────────────────
+dataset/raw/
+dataset/processed/*.csv
+dataset/processed/knowledge_base/
+dataset/statistics/
+
+# ── Evaluation results ───────────────────────────────
+evaluation/results/
+
+# ── LanceDB / Vector Store ───────────────────────────
+*.lance
+.lancedb/
+
 # ── Coverage ──────────────────────────────────────────
 htmlcov/
 .coverage

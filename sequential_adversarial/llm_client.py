@@ -70,6 +70,42 @@ _MOCK_RESPONSES: dict[str, str] = {
             "False urgency detected in narrative framing"
         ],
         "markdown_report": "## Verity Report\n**Conclusion:** FALSE ❌\n\n**Evidence:** Mock analysis complete.\n\n**Bias:** Fear-based framing detected."
+    }),
+    # ── New Agent Pipeline Mocks ──────────────────────────────────────
+    "claim_extractor": json.dumps({
+        "claims": [
+            {
+                "text": "Vaccine COVID-19 gây ra hàng nghìn ca tử vong",
+                "importance": 0.95,
+                "category": "health"
+            },
+            {
+                "text": "Các hãng dược phẩm che giấu tác dụng phụ",
+                "importance": 0.85,
+                "category": "health"
+            }
+        ],
+        "article_summary": "[MOCK] Bài viết chứa thông tin chưa được kiểm chứng về vaccine COVID-19.",
+        "overall_credibility_hint": 0.2
+    }),
+    "reasoning_scorer": json.dumps({
+        "fake_score": 82,
+        "label": "Fake",
+        "confidence": 0.85,
+        "reasoning_steps": [
+            "[MOCK] Bước 1: Claim chính về tử vong do vaccine thiếu nguồn đáng tin cậy",
+            "[MOCK] Bước 2: Không tìm thấy nghiên cứu bị rò rỉ nào từ nguồn uy tín",
+            "[MOCK] Bước 3: WHO và CDC đã bác bỏ thông tin này nhiều lần"
+        ],
+        "explanation": "[MOCK] Bài viết chứa nhiều yếu tố đáng ngờ: sử dụng ngôn ngữ gây sốc (KHẨN CẤP, hàng nghìn ca tử vong), thiếu trích dẫn nguồn cụ thể, và kêu gọi chia sẻ ngay. Các tổ chức y tế quốc tế đã bác bỏ thông tin tương tự.",
+        "evidence_citations": [
+            {
+                "claim": "Vaccine gây tử vong",
+                "verdict": "REFUTED",
+                "supporting_evidence": "[MOCK] WHO: Vaccine COVID-19 an toàn và hiệu quả"
+            }
+        ],
+        "risk_factors": ["Ngôn ngữ gây sốc", "Thiếu nguồn đáng tin cậy", "Kêu gọi chia sẻ gấp"]
     })
 }
 
