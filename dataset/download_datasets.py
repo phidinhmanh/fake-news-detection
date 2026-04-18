@@ -32,7 +32,7 @@ def download_vifactcheck(output_dir: Path) -> pd.DataFrame:
     try:
         from datasets import load_dataset
 
-        ds = load_dataset("ngtram/vifactcheck")
+        ds = load_dataset("tranthaihoa/vifactcheck")
     except Exception as exc:
         logger.error(f"❌ Không thể download ViFactCheck: {exc}")
         logger.info(
