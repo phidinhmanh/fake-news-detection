@@ -61,7 +61,7 @@ DEFAULT_EPOCHS = 10
 DEFAULT_MAX_SEQ_LEN = 256
 
 # ── PhoBERT Configuration ─────────────────────────────
-PHOBERT_MODEL_NAME = "vinai/phobert-base"
+PHOBERT_MODEL_NAME = "vinai/phobert-base-v2"
 PHOBERT_MAX_SEQ_LEN = 256
 PHOBERT_BATCH_SIZE = 16
 PHOBERT_LEARNING_RATE = 1e-5
