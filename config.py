@@ -55,14 +55,14 @@ DOMAINS = ("politics", "health", "finance", "social")
 LABELS = ("fake", "real")
 
 # ── Training defaults ──────────────────────────────────
-DEFAULT_BATCH_SIZE = 32
-DEFAULT_LEARNING_RATE = 2e-5
+DEFAULT_BATCH_SIZE = 16
+DEFAULT_LEARNING_RATE = 1e-5
 DEFAULT_EPOCHS = 10
 DEFAULT_MAX_SEQ_LEN = 256
 
 # ── PhoBERT Configuration ─────────────────────────────
 PHOBERT_MODEL_NAME = "vinai/phobert-base-v2"
-PHOBERT_MAX_SEQ_LEN = 256
+PHOBERT_MAX_SEQ_LEN = 512
 PHOBERT_BATCH_SIZE = 16
 PHOBERT_LEARNING_RATE = 1e-5
 PHOBERT_EPOCHS = 10
