@@ -14,6 +14,7 @@ dependencies = [
     "scikit-learn>=1.3.0",
     "torch>=2.0.0",
     "transformers>=4.30.0",
+    "tf-keras>=2.15.0",
     # ── Vietnamese NLP ────────────────────────────────
     "underthesea>=6.8.0",
     "langdetect>=1.0.9",
