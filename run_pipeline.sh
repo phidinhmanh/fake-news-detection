@@ -40,9 +40,13 @@ print_step() {
 check_api_keys() {
     print_step "1" "Kiểm tra API Keys"
     
-    if [ -z "$GOOGLE_API_KEY" ]; then
+    # Check GOOGLE_API_KEY
+    key=$GOOGLE_API_KEY
+    if [ -z "$key" ]; then
         echo -e "${WARN} Không tìm thấy GOOGLE_API_KEY trong môi trường."
-        read -p "   Nhập GOOGLE_API_KEY (Gemini): " key
+        read -p "   Nhập GOOGLE_API_KEY (Gemini): " key_input
+        # Strip prefixes if any
+        key=$(echo "$key_input" | sed 's/GOOGLE_API_KEY=//g' | xargs)
         if [ ! -z "$key" ]; then
             export GOOGLE_API_KEY=$key
             echo -e "   ${CHECK} Đã thiết lập GOOGLE_API_KEY."
@@ -53,13 +57,20 @@ check_api_keys() {
         echo -e "   ${CHECK} GOOGLE_API_KEY đã sẵn sàng."
     fi
 
-    if [ -z "$HF_TOKEN" ]; then
+    # Check HF_TOKEN
+    token=$HF_TOKEN
+    if [ -z "$token" ]; then
         echo -e "${WARN} Không tìm thấy HF_TOKEN."
-        read -p "   Nhập HF_TOKEN (Hugging Face): " token
+        read -p "   Nhập HF_TOKEN (Hugging Face): " token_input
+        # Strip prefixes if any
+        token=$(echo "$token_input" | sed 's/HF_TOKEN=//g' | xargs)
         if [ ! -z "$token" ]; then
             export HF_TOKEN=$token
-            python3 -c "from huggingface_hub import login; login(token='$token')"
-            echo -e "   ${CHECK} Đã đăng nhập HF Hub."
+            if python3 -c "from huggingface_hub import login; login(token='$token', add_to_git_credential=False)"; then
+                echo -e "   ${CHECK} Đã đăng nhập HF Hub."
+            else
+                echo -e "   ${CROSS} Đăng nhập HF Hub thất bại. Kiểm tra lại Token."
+            fi
         else
             echo -e "   ${WARN} Một số model có thể không tải được nếu thiếu token."
         fi
@@ -86,14 +97,22 @@ data_preparation() {
         python3 dataset/download_datasets.py
     else
         echo -e "${INFO} Đang tạo Mock Data..."
-        # Gọi script nội tại để tạo mock data
+        # Gọi script nội tại để tạo mock data - FIX IMPORT Path
         python3 <<EOF
-import config, pandas as pd, Path
+import config, pandas as pd
 from pathlib import Path
+import os
 config.DATASET_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 texts = ["Vaccine cực kỳ nguy hiểm!", "Thủ tướng họp báo.", "Giá xăng tăng."] * 10
-mock_data = pd.DataFrame({'text': texts, 'label': ['fake', 'real', 'fake']*10, 'source': ['social', 'news', 'news']*10, 'lang': ['vi']*30})
-mock_data.to_csv(config.DATASET_PROCESSED_DIR / "preprocessed_all.csv", index=False)
+mock_data = pd.DataFrame({
+    'text': texts, 
+    'label': ['fake', 'real', 'fake']*10, 
+    'source': ['social', 'news', 'news']*10, 
+    'lang': ['vi']*30
+})
+mock_path = config.DATASET_PROCESSED_DIR / "preprocessed_all.csv"
+mock_data.to_csv(mock_path, index=False)
+print(f"✅ Created mock data at {mock_path}")
 EOF
     fi
     
