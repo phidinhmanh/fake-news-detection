@@ -147,8 +147,17 @@ EOF
 
 run_web_ui() {
     print_step "5" "Khởi động Giao diện Web (Streamlit)"
-    echo -e "${INFO} Streamlit sẽ chạy trên cổng 8501."
-    streamlit run ui/app.py
+    
+    # Check if localtunnel is needed (usually for Colab/Remote)
+    echo -e "   ${INFO} Mật khẩu để truy cập LocalTunnel (Password/Endpoint IP) là:"
+    curl -s ipv4.icanhazip.com
+    
+    echo -e "\n   ${ROCKET} Đang khởi động Streamlit và Tunnel..."
+    echo -e "   ${WARN} Sau khi URL '.loca.lt' xuất hiện, hãy click vào đó và dán IP ở trên vào ô 'Endpoint IP'."
+    
+    # Run streamlit in background and localtunnel
+    streamlit run ui/app.py --server.port 8501 > /dev/null 2>&1 &
+    npx localtunnel --port 8501
 }
 
 # ── Main Loop ─────────────────────────────────────────────────────────────────

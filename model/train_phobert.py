@@ -15,9 +15,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -47,6 +49,40 @@ from config import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+def set_seed(seed: int = 42) -> None:
+    """Set seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    logger.info(f"🌱 Seed set to {seed}")
+
+
+class EarlyStopping:
+    """Simple early stopping handler."""
+
+    def __init__(self, patience: int = 3, min_delta: float = 0.0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, current_score: float) -> bool:
+        if self.best_score is None:
+            self.best_score = current_score
+        elif current_score < self.best_score + self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = current_score
+            self.counter = 0
+        return self.early_stop
 
 
 def load_data(split: str, with_features: bool = False) -> pd.DataFrame:
@@ -183,9 +219,13 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=PHOBERT_BATCH_SIZE)
     parser.add_argument("--lr", type=float, default=PHOBERT_LEARNING_RATE)
     parser.add_argument("--max-seq-len", type=int, default=PHOBERT_MAX_SEQ_LEN)
+    parser.add_argument("--patience", type=int, default=3, help="Early stopping patience")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
     args = parser.parse_args()
 
+    set_seed(args.seed)
     with_features = args.variant == "features"
 
     # Device
@@ -221,6 +261,17 @@ def main() -> None:
             logger.info("📊 Extracting features on-the-fly...")
             train_features = extract_features_batch(df_train[text_col].tolist())
             val_features = extract_features_batch(df_val[text_col].tolist())
+
+            # Cache the extracted features to CSV for future runs
+            logger.info("💾 Caching extracted features to CSV...")
+            for split, df_split, feats in zip(
+                ["train", "val"], [df_train, df_val], [train_features, val_features]
+            ):
+                feat_df = pd.DataFrame(feats, columns=FEATURE_NAMES)
+                df_with_feats = pd.concat([df_split.reset_index(drop=True), feat_df], axis=1)
+                cache_path = DATASET_PROCESSED_DIR / f"{split}_with_features.csv"
+                df_with_feats.to_csv(cache_path, index=False, encoding="utf-8")
+                logger.info(f"   - Saved {cache_path}")
         else:
             train_features = df_train[FEATURE_NAMES].values.astype(np.float32)
             val_features = df_val[FEATURE_NAMES].values.astype(np.float32)
@@ -257,8 +308,12 @@ def main() -> None:
 
         model = PhoBERTBaseline(model_name=PHOBERT_MODEL_NAME).to(device)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers
+    )
 
     # Optimizer & scheduler
     total_steps = len(train_loader) * args.epochs
@@ -280,6 +335,7 @@ def main() -> None:
     best_f1 = 0.0
     best_epoch = 0
     history: list[dict] = []
+    early_stopper = EarlyStopping(patience=args.patience)
 
     MODELS_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     model_name = f"phobert_{'features' if with_features else 'baseline'}"
@@ -315,14 +371,26 @@ def main() -> None:
             model.save_model(str(save_path))
             logger.info(f"  ⭐ New best F1: {best_f1:.4f} (epoch {epoch})")
 
+        # Early stopping check
+        if early_stopper(val_metrics["f1"]):
+            logger.info(f"🛑 Early stopping triggered at epoch {epoch}")
+            break
+
     # Save final
     final_path = MODELS_ARTIFACTS_DIR / f"{model_name}_final.pt"
     model.save_model(str(final_path))
 
     # Save training history
     history_path = MODELS_ARTIFACTS_DIR / f"{model_name}_history.json"
+    output_data = {
+        "config": vars(args),
+        "history": history,
+        "best_f1": best_f1,
+        "best_epoch": best_epoch,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
     with open(history_path, "w") as f:
-        json.dump(history, f, indent=2)
+        json.dump(output_data, f, indent=2)
 
     logger.info(f"\n{'=' * 60}")
     logger.info(f"✅ TRAINING HOÀN TẤT")
@@ -330,6 +398,20 @@ def main() -> None:
     logger.info(f"  Model: {final_path}")
     logger.info(f"  History: {history_path}")
     logger.info(f"{'=' * 60}")
+
+    # Print Markdown Summary for Colab
+    print("\n" + "#" * 30)
+    print("📊 TRAINING SUMMARY (MARKDOWN)")
+    print("#" * 30)
+    print(f"| Metric | Value |")
+    print(f"| :--- | :--- |")
+    print(f"| Model Variant | {args.variant} |")
+    print(f"| Best Epoch | {best_epoch} |")
+    print(f"| Best Val F1 | {best_f1:.4f} |")
+    print(f"| Best Val Acc | {history[best_epoch-1]['val_accuracy']:.4f} |")
+    print(f"| Best Val AUC | {history[best_epoch-1]['val_auc']:.4f} |")
+    print("#" * 30 + "\n")
+
 
 
 if __name__ == "__main__":

@@ -17,13 +17,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-def merge_all_datasets(processed_dir: Path) -> pd.DataFrame:
+def merge_all_datasets(processed_dir: Path, exclude_suspicious: bool = False) -> pd.DataFrame:
     """Merge tất cả preprocessed datasets thành 1 DataFrame thống nhất.
 
     Schema output: text, text_clean, label, source, lang
 
     Args:
         processed_dir: Thư mục chứa preprocessed files.
+        exclude_suspicious: Nếu True, loại bỏ nhãn 'suspicious' (NEI).
 
     Returns:
         Merged DataFrame.
@@ -51,8 +52,14 @@ def merge_all_datasets(processed_dir: Path) -> pd.DataFrame:
     else:
         df["text_final"] = df["text"]
 
+    # Filter suspicious if requested
+    if exclude_suspicious:
+        before_filter = len(df)
+        df = df[df["label"] != "suspicious"].reset_index(drop=True)
+        logger.info(f"🚫 Excluded suspicious samples: {before_filter} → {len(df)}")
+
     # Normalize labels → binary (for main classification task)
-    # real → 0, fake → 1, suspicious → 1 (tính vào fake cho binary)
+    # real → 0, fake → 1, suspicious → 1 (nếu không exclude)
     label_map_binary = {"real": 0, "fake": 1, "suspicious": 1}
     df["label_binary"] = df["label"].map(label_map_binary)
 
@@ -65,6 +72,7 @@ def merge_all_datasets(processed_dir: Path) -> pd.DataFrame:
     df["label_binary"] = df["label_binary"].astype(int)
 
     return df
+
 
 
 def split_dataset(
@@ -201,16 +209,25 @@ def generate_statistics(df: pd.DataFrame, stats_dir: Path) -> None:
 def main() -> None:
     """Merge, split, và generate statistics."""
     import sys
+    import argparse
 
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     from config import DATASET_PROCESSED_DIR, DATASET_STATS_DIR
 
+    parser = argparse.ArgumentParser(description="Merge & Split datasets")
+    parser.add_argument("--exclude-suspicious", action="store_true", help="Loại bỏ nhãn suspicious (NEI)")
+    args = parser.parse_args()
+
+    DATASET_PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
     logger.info("=" * 60)
     logger.info("🚀 MERGE & SPLIT DATASETS")
+    if args.exclude_suspicious:
+        logger.info("🚫 Mode: Binary only (exclude suspicious/NEI)")
     logger.info("=" * 60)
 
     # 1. Merge
-    df = merge_all_datasets(DATASET_PROCESSED_DIR)
+    df = merge_all_datasets(DATASET_PROCESSED_DIR, exclude_suspicious=args.exclude_suspicious)
     if df.empty:
         return
 
@@ -229,6 +246,7 @@ def main() -> None:
     logger.info("\n" + "=" * 60)
     logger.info("✅ MERGE & SPLIT HOÀN TẤT")
     logger.info("=" * 60)
+
 
 
 if __name__ == "__main__":

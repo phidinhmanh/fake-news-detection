@@ -37,10 +37,12 @@ class PhoBERTWithFeatures(nn.Module):
         hidden_dim: int = 256,
         dropout: float = 0.1,
         freeze_base: bool = False,
+        class_weights: Optional[torch.Tensor] = None,
     ):
         super().__init__()
         self.model_name = model_name
         self.num_features = num_features
+        self.class_weights = class_weights
 
         try:
             from transformers import AutoModel
@@ -108,7 +110,9 @@ class PhoBERTWithFeatures(nn.Module):
         result = {"logits": logits}
 
         if labels is not None:
-            loss_fn = nn.CrossEntropyLoss()
+            # Move class weights to the same device as labels if provided
+            weight = self.class_weights.to(labels.device) if self.class_weights is not None else None
+            loss_fn = nn.CrossEntropyLoss(weight=weight)
             result["loss"] = loss_fn(logits, labels)
 
         return result
