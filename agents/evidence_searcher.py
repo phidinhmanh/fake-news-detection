@@ -55,6 +55,7 @@ def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
 
     try:
         # Wikipedia API search
+        headers = {"User-Agent": "FakeNewsDetection/1.0 (Contact: admin@example.com)"}
         search_url = "https://vi.wikipedia.org/w/api.php"
         search_params = {
             "action": "query",
@@ -65,7 +66,7 @@ def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
             "utf8": 1,
         }
 
-        resp = requests.get(search_url, params=search_params, timeout=10)
+        resp = requests.get(search_url, params=search_params, headers=headers, timeout=10)
         resp.raise_for_status()
         data = resp.json()
 
@@ -84,7 +85,7 @@ def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
                 "utf8": 1,
             }
 
-            ext_resp = requests.get(search_url, params=extract_params, timeout=10)
+            ext_resp = requests.get(search_url, params=extract_params, headers=headers, timeout=10)
             ext_data = ext_resp.json()
 
             pages = ext_data.get("query", {}).get("pages", {})
