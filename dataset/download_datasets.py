@@ -30,14 +30,20 @@ def download_vifactcheck(output_dir: Path) -> pd.DataFrame:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        from datasets import load_dataset
-
-        ds = load_dataset("tranthaihoa/vifactcheck")
+        splits = {
+            'train': 'data/train-00000-of-00001.parquet',
+            'test': 'data/test-00000-of-00001.parquet',
+            'dev': 'data/dev-00000-of-00001.parquet'
+        }
+        ds = {}
+        for split_name, split_path in splits.items():
+            df_split = pd.read_parquet("hf://datasets/tranthaihoa/vifactcheck/" + split_path)
+            ds[split_name] = df_split.to_dict("records")
     except Exception as exc:
         logger.error(f"❌ Không thể download ViFactCheck: {exc}")
         logger.info(
-            "💡 Thử cài đặt: pip install datasets\n"
-            "   Hoặc download thủ công: https://huggingface.co/datasets/ngtram/vifactcheck"
+            "💡 Có thể cần cài đặt thêm pyarrow hoặc fsspec\n"
+            "   Hoặc download thủ công: https://huggingface.co/datasets/tranthaihoa/vifactcheck"
         )
         return pd.DataFrame()
 
@@ -49,7 +55,7 @@ def download_vifactcheck(output_dir: Path) -> pd.DataFrame:
 
         for row in split:
             # Map label: SUPPORTED → real, REFUTED → fake, NEI → suspicious
-            original_label = row.get("label", "")
+            original_label = row.get("label", row.get("labels", ""))
             if isinstance(original_label, int):
                 label_map_int = {0: "SUPPORTED", 1: "REFUTED", 2: "NOT ENOUGH INFO"}
                 original_label = label_map_int.get(original_label, str(original_label))
@@ -60,11 +66,11 @@ def download_vifactcheck(output_dir: Path) -> pd.DataFrame:
                 "NOT ENOUGH INFO": "suspicious",
                 "NEI": "suspicious",
             }
-            label = label_map.get(original_label.upper().strip(), "suspicious")
+            label = label_map.get(str(original_label).upper().strip(), "suspicious")
 
             all_rows.append({
-                "text": row.get("claim", ""),
-                "evidence": row.get("evidence", ""),
+                "text": row.get("claim", row.get("Statement", "")),
+                "evidence": row.get("evidence", row.get("Evidence", "")),
                 "label": label,
                 "original_label": original_label,
                 "source": "vifactcheck",
