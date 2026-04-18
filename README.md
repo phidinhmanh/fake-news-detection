@@ -68,7 +68,7 @@ uv run python dataset/merge_datasets.py
 
 # Bước 2.5: Trích xuất các đặc trưng văn phong (Stylistic features)
 uv run python dataset/feature_extraction.py
-```
+```     
 > ⚠️ **Chú ý quan trọng**: Dữ liệu train/test sau khi chạy các bước trên sẽ nằm trong `dataset/processed/`. Nếu bạn bỏ qua chạy dòng **2.3** và **2.4** mà sang bước 3 luôn, bạn sẽ bắt gặp lỗi `FileNotFoundError: Data not found: dataset/processed/train.csv`.
 
 ### 3. Huấn luyện mô hình (Model Training)

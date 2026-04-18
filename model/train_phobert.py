@@ -217,9 +217,10 @@ def main() -> None:
     parser.add_argument("--variant", choices=["baseline", "features"], default="baseline")
     parser.add_argument("--epochs", type=int, default=PHOBERT_EPOCHS)
     parser.add_argument("--batch-size", type=int, default=PHOBERT_BATCH_SIZE)
-    parser.add_argument("--lr", type=float, default=PHOBERT_LEARNING_RATE)
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate (default 1e-5)")
     parser.add_argument("--max-seq-len", type=int, default=PHOBERT_MAX_SEQ_LEN)
-    parser.add_argument("--patience", type=int, default=3, help="Early stopping patience")
+    parser.add_argument("--dropout", type=float, default=0.3, help="Dropout probability (default 0.3)")
+    parser.add_argument("--patience", type=int, default=5, help="Early stopping patience")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", type=str, default="auto")
@@ -291,7 +292,13 @@ def main() -> None:
             max_length=args.max_seq_len,
         )
 
-        model = PhoBERTWithFeatures(model_name=PHOBERT_MODEL_NAME).to(device)
+        from sklearn.utils.class_weight import compute_class_weight
+        classes = np.unique(df_train[label_col])
+        class_w = compute_class_weight(class_weight="balanced", classes=classes, y=df_train[label_col])
+        class_weights = torch.tensor(class_w, dtype=torch.float32).to(device)
+        logger.info(f"⚖️ Computed class weights: {class_weights.tolist()}")
+
+        model = PhoBERTWithFeatures(model_name=PHOBERT_MODEL_NAME, dropout=args.dropout, class_weights=class_weights).to(device)
     else:
         train_dataset = PhoBERTDataset(
             texts=df_train[text_col].tolist(),
@@ -306,7 +313,13 @@ def main() -> None:
             max_length=args.max_seq_len,
         )
 
-        model = PhoBERTBaseline(model_name=PHOBERT_MODEL_NAME).to(device)
+        from sklearn.utils.class_weight import compute_class_weight
+        classes = np.unique(df_train[label_col])
+        class_w = compute_class_weight(class_weight="balanced", classes=classes, y=df_train[label_col])
+        class_weights = torch.tensor(class_w, dtype=torch.float32).to(device)
+        logger.info(f"⚖️ Computed class weights: {class_weights.tolist()}")
+
+        model = PhoBERTBaseline(model_name=PHOBERT_MODEL_NAME, dropout=args.dropout, class_weights=class_weights).to(device)
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers
