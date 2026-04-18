@@ -73,139 +73,124 @@ class AgentPipeline:
 
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-        # LLM Client
-        if llm_client is None:
-            from sequential_adversarial.llm_client import LLMClient
-            self.llm = LLMClient(mock=mock)
-        else:
-            self.llm = llm_client
-
-        # Knowledge Base
-        if knowledge_base is None:
-            try:
-                from agents.knowledge_base import KnowledgeBase
-                self.kb = KnowledgeBase()
-            except Exception as exc:
-                logger.warning(f"⚠️ Knowledge base init failed: {exc}. RAG sẽ bị giới hạn.")
-                self.kb = None
-        else:
-            self.kb = knowledge_base
-
-        # Initialize agents
-        from agents.claim_extractor import ClaimExtractor
-        from agents.evidence_searcher import EvidenceSearcher
-        from agents.reasoning_scorer import ReasoningScorer
-
-        self.claim_extractor = ClaimExtractor(self.llm)
-        self.evidence_searcher = EvidenceSearcher(
-            knowledge_base=self.kb,
-            use_wikipedia=use_wikipedia,
-        )
-        self.reasoning_scorer = ReasoningScorer(self.llm)
-
+        # Khởi tạo lõi xử lí chính (SequentialAdversarialPipeline) thay vì 3 agents rời rạc
+        from sequential_adversarial.pipeline import SequentialAdversarialPipeline
+        
         self.mock = mock
+        # Chúng ta bỏ qua use_wikipedia và knowledge_base manual ở đây vì 
+        # SequentialAdversarialPipeline.__init__ đã tự handle việc tích hợp RAG EvidenceSearcher!
+        self.pipeline = SequentialAdversarialPipeline(llm=llm_client, mock=self.mock)
+        
         logger.info(f"🤖 AgentPipeline initialized ({'mock' if mock else 'live'} mode)")
+        logger.info("⚡ Đang sử dụng lõi SequentialAdversarialPipeline (7-Stage Adapter Mode) ⚡")
 
     def analyze(self, article_text: str) -> AgentAnalysisResult:
-        """Phân tích bài viết qua 3 agents.
+        """Phân tích bài viết qua lõi SequentialAdversarial và mapping sang giao diện cũ.
 
         Args:
             article_text: Nội dung bài viết.
 
         Returns:
-            AgentAnalysisResult object.
+            AgentAnalysisResult object tương thích ngược với web app.
         """
         start_time = time.time()
         agents_status: dict = {}
 
         logger.info("=" * 60)
-        logger.info("🚀 [AgentPipeline] BẮT ĐẦU PHÂN TÍCH")
+        logger.info("🚀 [AgentPipeline Adapter] BẮT ĐẦU PHÂN TÍCH QUA SEQ-PIPELINE")
         logger.info("=" * 60)
 
-        # ── Agent 1: Claim Extraction ──────────────────────────────
         try:
-            logger.info("\n📌 [Agent 1] Trích xuất claims...")
-            claim_result = self.claim_extractor.extract(article_text)
-            claims = [c.model_dump() for c in claim_result.claims]
-            article_summary = claim_result.article_summary
-            agents_status["claim_extractor"] = "success"
-        except Exception as exc:
-            logger.error(f"❌ Agent 1 failed: {exc}")
-            claims = [{"text": article_text[:200], "importance": 0.5, "category": "general"}]
-            article_summary = "Lỗi trích xuất claims."
-            agents_status["claim_extractor"] = f"error: {str(exc)[:50]}"
+            # 1. Chạy tiến trình 7 bước
+            sq_result = self.pipeline.run(article_text)
+            
+            # 2. Xây dựng Score và Label
+            if sq_result.verity_report.conclusion == "False":
+                label = "Fake"
+                fake_score = int(sq_result.verity_report.confidence * 100)
+            elif sq_result.verity_report.conclusion == "True":
+                label = "Real"
+                fake_score = int((1.0 - sq_result.verity_report.confidence) * 100)
+            else:
+                label = "Suspicious"
+                fake_score = 50
 
-        # ── Agent 2: Evidence Search ───────────────────────────────
-        try:
-            logger.info("\n🔎 [Agent 2] Tìm evidence...")
-            claim_texts = [c["text"] for c in claims]
-            evidence_result = self.evidence_searcher.search_claims(claim_texts)
+            # 3. Gom nhặt Evidence từ Stage 3 (DataAnalyst -> ClaimAnalysis)
+            evidence_list = []
+            citations = []
+            sources_used = set()
+            for ca in sq_result.claim_analyses:
+                for src in ca.sources:
+                    # Tái cấu trúc source thành format cũ mong đợi của AgentAnalysisResult
+                    evidence_list.append({
+                        "url": src.url,
+                        "title": "Nguồn từ DataAnalyst (Stage 3)",
+                        "snippet": src.excerpt
+                    })
+                    citations.append({
+                        "claim": ca.claim.text,
+                        "verdict": ca.verdict.upper(),
+                        "supporting_evidence": src.excerpt
+                    })
+                    if src.url:
+                        sources_used.add(src.url)
 
-            evidence = []
-            for ce in evidence_result.claim_evidences:
-                for e in ce.evidences:
-                    evidence.append(e.model_dump())
-
-            sources_used = evidence_result.sources_used
-            agents_status["evidence_searcher"] = "success"
-        except Exception as exc:
-            logger.error(f"❌ Agent 2 failed: {exc}")
-            evidence = []
-            sources_used = []
-            agents_status["evidence_searcher"] = f"error: {str(exc)[:50]}"
-
-        # ── Agent 3: Reasoning + Scoring ───────────────────────────
-        try:
-            logger.info("\n🧠 [Agent 3] Reasoning & scoring...")
-            reasoning_result = self.reasoning_scorer.reason(
-                claims=claims,
-                evidence=evidence,
-                article_text=article_text,
+            # Đánh dấu status nội bộ
+            agents_status["sq_orchestrator"] = "success"
+            
+            # 4. Gom nhặt các giải thích (Explanation)
+            explanation = (
+                f"{sq_result.verity_report.markdown_report}\n\n"
+                f"**Ghi chú phản biện (Bias Auditor):**\n{sq_result.bias_report.adversarial_notes}"
             )
-            agents_status["reasoning_scorer"] = "success"
+
+            # 5. Khởi tạo đối tượng trả về (Adapter Translation)
+            elapsed = time.time() - start_time
+            result = AgentAnalysisResult(
+                fake_score=fake_score,
+                label=label,
+                confidence=sq_result.verity_report.confidence,
+                explanation=explanation,
+                claims=[c.model_dump() for c in sq_result.claims],
+                article_summary=sq_result.investigation_summary,
+                evidence=evidence_list,
+                sources_used=list(sources_used),
+                reasoning_steps=sq_result.verity_report.key_findings,
+                evidence_citations=citations,
+                risk_factors=sq_result.bias_report.analyst_blind_spots,  # mượn field
+                processing_time_seconds=round(elapsed, 2),
+                agents_status=agents_status,
+            )
+
+            logger.info(f"\n{'=' * 60}")
+            logger.info(
+                f"✅ [AgentPipeline Adapter] HOÀN TẤT | "
+                f"Score: {result.fake_score}% | "
+                f"Label: {result.label} | "
+                f"Time: {elapsed:.1f}s"
+            )
+            logger.info(f"{'=' * 60}")
+
+            return result
+
         except Exception as exc:
-            logger.error(f"❌ Agent 3 failed: {exc}")
-            from agents.reasoning_scorer import ReasoningResult
-
-            reasoning_result = ReasoningResult(fake_score=50, label="Suspicious", confidence=0.3)
-            agents_status["reasoning_scorer"] = f"error: {str(exc)[:50]}"
-
-        # ── Compile Final Result ───────────────────────────────────
-        elapsed = time.time() - start_time
-
-        result = AgentAnalysisResult(
-            fake_score=reasoning_result.fake_score,
-            label=reasoning_result.label,
-            confidence=reasoning_result.confidence,
-            explanation=reasoning_result.explanation,
-            claims=claims,
-            article_summary=article_summary,
-            evidence=evidence,
-            sources_used=sources_used,
-            reasoning_steps=reasoning_result.reasoning_steps,
-            evidence_citations=[c.model_dump() for c in reasoning_result.evidence_citations],
-            risk_factors=reasoning_result.risk_factors,
-            processing_time_seconds=round(elapsed, 2),
-            agents_status=agents_status,
-        )
-
-        logger.info(f"\n{'=' * 60}")
-        logger.info(
-            f"✅ [AgentPipeline] HOÀN TẤT | "
-            f"Score: {result.fake_score}% | "
-            f"Label: {result.label} | "
-            f"Time: {elapsed:.1f}s"
-        )
-        logger.info(f"{'=' * 60}")
-
-        return result
+            logger.error(f"❌ [AgentPipeline Adapter] Thất bại thảm hại: {exc}")
+            elapsed = time.time() - start_time
+            agents_status["sq_orchestrator"] = f"error: {str(exc)}"
+            return AgentAnalysisResult(
+                fake_score=50,
+                label="Error",
+                explanation=f"Có lỗi nghiêm trọng trong lõi xử lý: {exc}",
+                processing_time_seconds=round(elapsed, 2),
+                agents_status=agents_status
+            )
 
 
 def main() -> None:
     """Demo pipeline với mock mode."""
     logging.basicConfig(level=logging.INFO)
 
-    pipeline = AgentPipeline(mock=True)
+    pipeline = AgentPipeline(mock=False)
 
     test_article = """
     KHẨN CẤP: Vaccine COVID-19 gây ra hàng nghìn ca tử vong trên toàn thế giới! 

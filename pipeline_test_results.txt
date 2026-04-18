@@ -24,5 +24,5 @@ TF-IDF Verdict: real
 Agreement with LLM: False
 Notes: ❌ XUNG ĐỘT KÉP: LLM bảo 'False', nhưng TF-IDF lại kêu 'real' (với P_Fake=0.22). Lệnh cho Biên Tập Viên con người vào duyệt!
 
-Visual Flowchart saved at: D:\Work\project UET\fake-new-detection\sequential_adversarial\data\visuals\verity_flowchart_20260418_100539.md
-Saved to DB with ID: db_11
+Visual Flowchart saved at: D:\Work\project UET\fake-new-detection\sequential_adversarial\data\visuals\verity_flowchart_20260418_102723.md
+Saved to DB with ID: db_13

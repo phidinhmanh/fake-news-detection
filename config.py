@@ -76,6 +76,20 @@ AGENT_TOP_K_EVIDENCE = 5
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 LANCEDB_TABLE_NAME = "vifactcheck_evidence"
 
+# ── Multi-LLM Provider Configuration ───────────────────────────────────────────
+import os as _os
+LLM_PROVIDER = _os.getenv("LLM_PROVIDER", "gemini")  # gemini/gemma/qwen/grok/nvidia/openai
+OLLAMA_BASE_URL = _os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+QWEN_API_KEY = _os.getenv("QWEN_API_KEY", "")
+GROK_API_KEY = _os.getenv("GROK_API_KEY", "")
+NVIDIA_API_KEY = _os.getenv("NVIDIA_API_KEY", "")
+OPENAI_API_KEY = _os.getenv("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = _os.getenv("OPENAI_BASE_URL", "")
+
+# ── Search API Configuration ────────────────────────────────────────────────────
+SEARCH_PROVIDER = _os.getenv("SEARCH_PROVIDER", "wikipedia")  # wikipedia/serper
+SERPER_API_KEY = _os.getenv("SERPER_API_KEY", "")
+
 # ── Target metrics ─────────────────────────────────────
 TARGET_BASELINE_F1 = 0.72
 TARGET_PHOBERT_F1 = 0.80

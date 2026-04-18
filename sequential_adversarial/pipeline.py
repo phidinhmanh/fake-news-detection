@@ -86,31 +86,48 @@ Respond ONLY with valid JSON exactly matching the requested schema.
 
 
 # ───────────────────────────────────────────────────────────────────────────────
-# [Stage 3] Data Analyst: Thư viện số
+# [Stage 3] Data Analyst: Máy Quét Đối Chứng (RAG)
 # ───────────────────────────────────────────────────────────────────────────────
 class DataAnalyst:
-    """Đối soát các Luận điểm (Claims) với các Nguồn tin độc lập giả lập/thực tế."""
+    """Sử dụng EvidenceSearcher để quét Wikipedia/DB và dùng LLM so khớp Bằng Chứng thật."""
 
     PROMPT_TEMPLATE = """You are a senior data analyst at a fact-checking organisation.
 
-Cross-check the provided claims against known credible sources.
-For EACH claim provide 2-3 hypothetical source references stating if they support, refute, or are neutral.
+Evaluate the provided claims based ONLY on the attached REAL evidence gathered from our Knowledge Base and Wikipedia. 
+For EACH claim, list the provided evidence sources as your `sources` list and determine a verdict ("supported", "refuted", "mixed", or "unverified").
+Do NOT invent hypothetical sources. Use only what is provided in the gathered evidence. If no evidence is provided, mark as unverified.
 
 Respond ONLY with valid JSON exactly matching the requested schema.
 
---- CLAIMS TO ANALYSE ---
-{claims_json}
+--- CLAIMS AND GATHERED REAL EVIDENCE ---
+{payload_json}
 """
 
-    def __init__(self, llm: LLMClient):
+    def __init__(self, llm: LLMClient, evidence_searcher=None):
         self.llm = llm
+        self.searcher = evidence_searcher
 
     def process(self, result: PipelineResult) -> PipelineResult:
-        logger.info("📚 [Stage 3] DataAnalyst: Đang kiểm tra chéo các nguồn tin...")
+        logger.info("📚 [Stage 3] DataAnalyst: Đang thu thập và đối chiếu Bằng Chứng Thực Tế...")
         
-        # Chuyển đổi Claims thành Ngữ cảnh (Context) để bơm vào cấu trúc Prompt
-        claims_json = json.dumps([c.model_dump() for c in result.claims], ensure_ascii=False, indent=2)
-        prompt = self.PROMPT_TEMPLATE.format(claims_json=claims_json)
+        # Gọi RAG Searcher cho từng claim
+        payload = []
+        for claim in result.claims:
+            evidence_data = []
+            if self.searcher:
+                try:
+                    ce = self.searcher.search_single_claim(claim.text)
+                    evidence_data = [e.model_dump() for e in ce.evidences]
+                except Exception as exc:
+                    logger.warning(f"⚠️ Không thể RAG cho claim '{claim.text[:30]}...': {exc}")
+                    
+            payload.append({
+                "claim": claim.model_dump(),
+                "gathered_real_evidence": evidence_data
+            })
+            
+        payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+        prompt = self.PROMPT_TEMPLATE.format(payload_json=payload_json)
 
         try:
             analysis = self.llm.generate_structured(
@@ -459,10 +476,22 @@ class SequentialAdversarialPipeline:
         self.llm = llm or LLMClient(mock=mock)
         self.input_processor = InputProcessor()
         
+        # Khởi tạo Evidence Searcher (RAG System)
+        searcher = None
+        if not mock:
+            try:
+                from agents.knowledge_base import KnowledgeBase
+                from agents.evidence_searcher import EvidenceSearcher
+                kb = KnowledgeBase()
+                searcher = EvidenceSearcher(knowledge_base=kb)
+                logger.info("✅ Tích hợp EvidenceSearcher RAG thành công.")
+            except Exception as exc:
+                logger.warning(f"⚠️ Khởi tạo RAG thất bại: {exc}. Stage 3 sẽ không có RAG.")
+        
         # Array này chứa List TẤT CẢ các bước, được pass con trỏ `result` theo dòng chảy
         self.stages = [
             LeadInvestigator(self.llm),
-            DataAnalyst(self.llm),
+            DataAnalyst(self.llm, evidence_searcher=searcher),
             BiasAuditor(self.llm),
             Synthesizer(self.llm),
             VisualEngine(),

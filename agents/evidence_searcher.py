@@ -1,12 +1,13 @@
 """
 evidence_searcher.py — Agent 2: RAG Search Evidence
 =====================================================
-Tìm evidence cho mỗi claim: ViFactCheck KB (vector search) + Wikipedia VN.
+Tìm evidence cho mỗi claim: ViFactCheck KB (vector search) + Wikipedia VN + Serper API.
 """
 
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -14,33 +15,25 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger(__name__)
 
 
-# ── Schema ─────────────────────────────────────────────────────────
-class EvidenceItem(BaseModel):
-    """Một mảnh evidence tìm được."""
+# ── Search Provider Abstract Class ──────────────────────────────────────────────
+class SearchProvider(ABC):
+    """Abstract base class for search providers."""
 
-    text: str = Field(description="Nội dung evidence")
-    source: str = Field(default="knowledge_base", description="Nguồn: knowledge_base / wikipedia")
-    relevance_score: float = Field(default=0.0, description="Điểm liên quan")
-    stance: str = Field(default="neutral", description="support / refute / neutral")
+    @abstractmethod
+    def search(self, query: str, top_k: int = 5) -> list[dict]:
+        """Search for evidence.
 
+        Args:
+            query: Search query.
+            top_k: Number of results to return.
 
-class ClaimEvidence(BaseModel):
-    """Evidence cho 1 claim."""
-
-    claim_text: str = Field(description="Claim gốc")
-    evidences: list[EvidenceItem] = Field(default_factory=list)
-    has_evidence: bool = Field(default=False)
-
-
-class EvidenceSearchResult(BaseModel):
-    """Tổng hợp evidence cho tất cả claims."""
-
-    claim_evidences: list[ClaimEvidence] = Field(default_factory=list)
-    total_evidence_found: int = Field(default=0)
-    sources_used: list[str] = Field(default_factory=list)
+        Returns:
+            List of dicts: {title, text, url}
+        """
+        pass
 
 
-# ── Wikipedia VN Search ────────────────────────────────────────────
+# ── Wikipedia VN Search ─────────────────────────────────────────────────────────
 def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
     """Tìm kiếm trên Wikipedia tiếng Việt (API miễn phí).
 
@@ -105,13 +98,106 @@ def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
         return []
 
 
+class WikipediaSearch(SearchProvider):
+    """Wikipedia VN search provider."""
+
+    def search(self, query: str, top_k: int = 5) -> list[dict]:
+        """Search Wikipedia VN."""
+        return search_wikipedia_vn(query, max_results=top_k)
+
+
+class SerperSearch(SearchProvider):
+    """Serper API (serpapi.com) search provider for Google search results."""
+
+    def __init__(self, api_key: Optional[str] = None):
+        """Initialize Serper search provider.
+
+        Args:
+            api_key: Serper API key. If None, reads from SERPER_API_KEY env var.
+        """
+        import os as _os
+        from config import SERPER_API_KEY
+
+        self.api_key = api_key or SERPER_API_KEY or _os.getenv("SERPER_API_KEY", "")
+        self.base_url = "https://serpapi.com/search"
+
+    def search(self, query: str, top_k: int = 5) -> list[dict]:
+        """Search using Serper API (Google).
+
+        Args:
+            query: Search query.
+            top_k: Number of results to return.
+
+        Returns:
+            List of dicts: {title, text, url}
+        """
+        if not self.api_key:
+            logger.warning("⚠️ Serper API key not set. Set SERPER_API_KEY env var.")
+            return []
+
+        try:
+            import requests
+
+            params = {
+                "q": query,
+                "api_key": self.api_key,
+                "engine": "google",
+                "num": top_k,
+            }
+
+            resp = requests.get(self.base_url, params=params, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
+
+            results = []
+            for item in data.get("organic_results", [])[:top_k]:
+                results.append({
+                    "title": item.get("title", ""),
+                    "text": item.get("snippet", "")[:500],
+                    "url": item.get("link", ""),
+                })
+
+            logger.info(f"  🌐 Serper: {len(results)} results for '{query[:50]}...'")
+            return results
+
+        except Exception as exc:
+            logger.warning(f"⚠️ Serper search failed: {exc}")
+            return []
+
+
+# ── Schema ─────────────────────────────────────────────────────────
+class EvidenceItem(BaseModel):
+    """Một mảnh evidence tìm được."""
+
+    text: str = Field(description="Nội dung evidence")
+    source: str = Field(default="knowledge_base", description="Nguồn: knowledge_base / wikipedia / serper")
+    relevance_score: float = Field(default=0.0, description="Điểm liên quan")
+    stance: str = Field(default="neutral", description="support / refute / neutral")
+
+
+class ClaimEvidence(BaseModel):
+    """Evidence cho 1 claim."""
+
+    claim_text: str = Field(description="Claim gốc")
+    evidences: list[EvidenceItem] = Field(default_factory=list)
+    has_evidence: bool = Field(default=False)
+
+
+class EvidenceSearchResult(BaseModel):
+    """Tổng hợp evidence cho tất cả claims."""
+
+    claim_evidences: list[ClaimEvidence] = Field(default_factory=list)
+    total_evidence_found: int = Field(default=0)
+    sources_used: list[str] = Field(default_factory=list)
+
+
 # ── Agent ──────────────────────────────────────────────────────────
 class EvidenceSearcher:
     """Agent 2: Tìm evidence cho claims.
 
     Workflow:
         1. Search ViFactCheck knowledge base (vector similarity)
-        2. Search Wikipedia VN (keyword search)
+        2. Search Wikipedia VN / Serper (keyword search)
         3. Combine & rank results
 
     Usage:
@@ -127,17 +213,30 @@ class EvidenceSearcher:
         self,
         knowledge_base=None,
         use_wikipedia: bool = True,
+        use_serper: bool = True,
         top_k: int = 5,
     ):
         """
         Args:
             knowledge_base: KnowledgeBase instance (optional).
             use_wikipedia: Có search Wikipedia VN hay không.
+            use_serper: Có search Serper API hay không.
             top_k: Số evidence tối đa per claim.
         """
         self.kb = knowledge_base
-        self.use_wikipedia = use_wikipedia
         self.top_k = top_k
+
+        # Initialize search providers
+        self._providers: list[SearchProvider] = []
+        if use_wikipedia:
+            self._providers.append(WikipediaSearch())
+        if use_serper:
+            serper = SerperSearch()
+            # Only add if API key is available
+            if serper.api_key:
+                self._providers.append(serper)
+            else:
+                logger.info("⚠️ Serper API key not set, skipping Serper search.")
 
     def search_single_claim(self, claim_text: str) -> ClaimEvidence:
         """Tìm evidence cho 1 claim.
@@ -165,20 +264,21 @@ class EvidenceSearcher:
             except Exception as exc:
                 logger.warning(f"⚠️ KB search failed: {exc}")
 
-        # 2. Search Wikipedia VN
-        if self.use_wikipedia:
+        # 2. Search external providers (Wikipedia, Serper)
+        for provider in self._providers:
+            provider_name = provider.__class__.__name__
             try:
-                wiki_results = search_wikipedia_vn(claim_text, max_results=3)
-                for r in wiki_results:
+                results = provider.search(claim_text, top_k=3)
+                for r in results:
                     evidences.append(EvidenceItem(
-                        text=f"[Wikipedia] {r['title']}: {r['text']}",
-                        source=r.get("url", "wikipedia_vn"),
+                        text=f"[{provider_name}] {r['title']}: {r['text']}",
+                        source=r.get("url", provider_name.lower()),
                         relevance_score=0.5,  # Default relevance
                         stance="neutral",
                     ))
-                logger.info(f"  📖 Wikipedia: {len(wiki_results)} results")
+                logger.info(f"  📖 {provider_name}: {len(results)} results")
             except Exception as exc:
-                logger.warning(f"⚠️ Wikipedia search failed: {exc}")
+                logger.warning(f"⚠️ {provider_name} search failed: {exc}")
 
         # Sort by relevance
         evidences.sort(key=lambda e: e.relevance_score, reverse=True)

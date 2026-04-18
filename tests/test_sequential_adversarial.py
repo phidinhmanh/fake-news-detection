@@ -272,5 +272,5 @@ class TestExtractJson:
         assert result.get("verdict") == "True"
 
     def test_malformed_returns_error_dict(self):
-        result = extract_json("this is not json at all @@@@")
-        assert "error" in result
+        with pytest.raises(ValueError):
+            extract_json("this is not json at all @@@@")

@@ -4,11 +4,18 @@ knowledge_base.py — Vector Store cho ViFactCheck Evidence (RAG)
 Dùng LanceDB để lưu trữ và search evidence trích từ ViFactCheck dataset.
 Embedding model: paraphrase-multilingual-MiniLM-L12-v2 (384-dim).
 
+Features:
+- Vector similarity search (LanceDB)
+- Hybrid search (vector + BM25)
+- Cross-encoder reranking
+
 Usage:
     from agents.knowledge_base import KnowledgeBase
     kb = KnowledgeBase()
     kb.build_from_vifactcheck()
     results = kb.search("Vaccine COVID gây tự kỷ", top_k=5)
+    # Or use hybrid search:
+    results = kb.search_hybrid("Vaccine COVID gây tự kỷ", top_k=5)
 """
 
 from __future__ import annotations
@@ -203,6 +210,185 @@ class KnowledgeBase:
         if table is None:
             return 0
         return len(table)
+
+    def search_hybrid(
+        self,
+        query: str,
+        top_k: int = 5,
+        alpha: float = 0.5,
+    ) -> list[dict]:
+        """Hybrid search kết hợp vector similarity + BM25 keyword search.
+
+        Args:
+            query: Search query.
+            top_k: Số kết quả trả về.
+            alpha: Weight for vector search (0.5 = equal weight).
+
+        Returns:
+            List of dicts: {claim, evidence, label, score}
+        """
+        table = self._get_table()
+        if table is None:
+            logger.warning("⚠️ Knowledge base chưa build. Chạy build_from_vifactcheck() trước.")
+            return []
+
+        # Vector search
+        vector_results = self.search(query, top_k=top_k * 2)
+
+        # BM25 keyword search
+        bm25_results = self._bm25_search(query, top_k=top_k * 2)
+
+        # RRF fusion
+        fused = self._rrf_fusion(vector_results, bm25_results, top_k, alpha=alpha)
+
+        logger.info(f"  🔀 Hybrid: {len(fused)} results (vector={len(vector_results)}, bm25={len(bm25_results)})")
+        return fused
+
+    def _bm25_search(self, query: str, top_k: int = 10) -> list[dict]:
+        """BM25 keyword search fallback khi không có full-text index.
+
+        Args:
+            query: Search query.
+            top_k: Số kết quả.
+
+        Returns:
+            List of dicts: {claim, evidence, label, score}
+        """
+        try:
+            from rank_bm25 import BM25Okapi
+        except ImportError:
+            logger.warning("⚠️ rank-bm25 not installed. Run: pip install rank-bm25")
+            return []
+
+        table = self._get_table()
+        if table is None:
+            return []
+
+        # Get all entries
+        try:
+            df = table.to_pandas()
+        except Exception:
+            return []
+
+        if df.empty:
+            return []
+
+        # Tokenize
+        corpus = [self._tokenize(str(row.get("evidence", ""))) for _, row in df.iterrows()]
+        bm25 = BM25Okapi(corpus)
+
+        query_tokens = self._tokenize(query)
+        scores = bm25.get_scores(query_tokens)
+
+        # Get top results
+        results = []
+        top_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+        for idx in top_indices:
+            if scores[idx] > 0:
+                row = df.iloc[idx]
+                results.append({
+                    "claim": row.get("claim", ""),
+                    "evidence": row.get("evidence", ""),
+                    "label": row.get("label", ""),
+                    "score": float(scores[idx]),
+                })
+
+        return results
+
+    def _tokenize(self, text: str) -> list[str]:
+        """Simple tokenization for BM25."""
+        import re
+        text = text.lower()
+        tokens = re.findall(r'\w+', text)
+        return [t for t in tokens if len(t) > 1]
+
+    def _rrf_fusion(
+        self,
+        list_a: list[dict],
+        list_b: list[dict],
+        top_k: int = 5,
+        alpha: float = 0.5,
+    ) -> list[dict]:
+        """Reciprocal Rank Fusion (RRF) for combining two result sets.
+
+        Args:
+            list_a: First result list (vector search).
+            list_b: Second result list (BM25 search).
+            top_k: Number of results to return.
+            alpha: Weight factor for list_a.
+
+        Returns:
+            Fused list of dicts.
+        """
+        if not list_a and not list_b:
+            return []
+        if not list_a:
+            return list_b[:top_k]
+        if not list_b:
+            return list_a[:top_k]
+
+        # Build score maps
+        score_a = {self._result_key(r): alpha * (1.0 / (rank + 1)) for rank, r in enumerate(list_a)}
+        score_b = {(1 - alpha) * (1.0 / (rank + 1)) for rank, r in enumerate(list_b)}
+
+        # Combine scores
+        all_keys = set(score_a.keys()) | set(score_b.keys())
+        fused_scores = {}
+        for key in all_keys:
+            fused_scores[key] = score_a.get(key, 0) + score_b.get(key, 0)
+
+        # Sort and return top_k
+        sorted_keys = sorted(fused_scores.keys(), key=lambda k: fused_scores[k], reverse=True)
+        result_map = {self._result_key(r): r for r in list_a + list_b}
+
+        return [result_map[k] for k in sorted_keys[:top_k] if k in result_map]
+
+    def _result_key(self, result: dict) -> str:
+        """Generate unique key for a result dict."""
+        return f"{result.get('claim', '')[:50]}|{result.get('evidence', '')[:50]}"
+
+    def rerank(
+        self,
+        query: str,
+        candidates: list[dict],
+        top_k: int = 5,
+    ) -> list[dict]:
+        """Rerank candidates using cross-encoder model.
+
+        Args:
+            query: The original query.
+            candidates: List of candidate result dicts.
+            top_k: Number of results to return after reranking.
+
+        Returns:
+            Reranked list of dicts.
+        """
+        if not candidates:
+            return []
+
+        try:
+            from sentence_transformers import CrossEncoder
+        except ImportError:
+            logger.warning("⚠️ sentence-transformers required for reranking.")
+            return candidates[:top_k]
+
+        try:
+            cross_encoder = CrossEncoder('cross-encoder/ms-marco-MiniLM-L-6-v2')
+        except Exception as exc:
+            logger.warning(f"⚠️ Could not load cross-encoder: {exc}")
+            return candidates[:top_k]
+
+        # Create query-document pairs
+        pairs = [(query, str(c.get("evidence", ""))) for c in candidates]
+        scores = cross_encoder.predict(pairs)
+
+        # Sort candidates by score
+        scored = list(zip(scores, candidates))
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # Return top_k
+        return [c for _, c in scored[:top_k]]
 
 
 def main() -> None:
