@@ -78,7 +78,7 @@ LANCEDB_TABLE_NAME = "vifactcheck_evidence"
 
 # ── Multi-LLM Provider Configuration ───────────────────────────────────────────
 import os as _os
-LLM_PROVIDER = _os.getenv("LLM_PROVIDER", "gemini")  # gemini/gemma/qwen/grok/nvidia/openai
+LLM_PROVIDER = _os.getenv("LLM_PROVIDER", "nvidia")  # gemini/gemma/qwen/grok/nvidia/openai
 OLLAMA_BASE_URL = _os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 QWEN_API_KEY = _os.getenv("QWEN_API_KEY", "")
 GROK_API_KEY = _os.getenv("GROK_API_KEY", "")
@@ -98,12 +98,80 @@ TARGET_LORA_F1 = 0.85
 TARGET_ENSEMBLE_AUC = 0.90
 TARGET_LATENCY_SECONDS = 3.0
 
+# ── Domain classification keywords (ARCH-3 fix) ──────────────────────────────
+# Vietnamese + English keywords for keyword-based domain classification
+DOMAIN_KEYWORDS = {
+    "politics": [
+        "chính trị", "politics", "chính phủ", "government", "bầu cử",
+        "election", "tổng thống", "president", "quốc hội", "parliament",
+        "đảng", "party", "nghị viện", "luật", "law", "chính sách", "policy",
+    ],
+    "health": [
+        "sức khỏe", "health", "bệnh", "disease", "vaccine", "vắc xin",
+        "bệnh viện", "hospital", "bác sĩ", "doctor", "y tế", "medical",
+        "thuốc", "medicine", "điều trị", "treatment", "dịch bệnh", "pandemic",
+    ],
+    "finance": [
+        "tài chính", "finance", "tiền", "money", "đầu tư", "investment",
+        "chứng khoán", "stock", "ngân hàng", "bank", "kinh tế", "economy",
+        "crypto", "bitcoin", "lãi suất", "interest", "vay", "loan",
+    ],
+    "social": [
+        "xã hội", "social", "gia đình", "family", "giáo dục", "education",
+        "văn hóa", "culture", "nghệ thuật", "art", "thể thao", "sport",
+        "giải trí", "entertainment", "công nghệ", "technology", "môi trường",
+    ],
+}
+
+# ── TF-IDF baseline configuration ───────────────────────────────────────────
+TFIDF_MAX_FEATURES = 5000  # ARCH-3 fix: magic number extraction
+
+# ── Dataset registry (ARCH-4 fix: OCP - factory pattern) ─────────────────────
+# Registry for raw dataset files: (filename, columns mapping, label, domain, lang)
+DATASET_REGISTRY = {
+    "fakenewsnet": {
+        "path": "fakenewsnet_clean.csv",
+        "columns": {"text": "text", "label": "label_binary"},
+        "label_map": {1: "fake", 0: "real"},
+        "domain": "social",
+        "lang": "en",
+    },
+    "gossipcop_fake": {
+        "path": "gossipcop_fake.csv",
+        "columns": {"text": "title"},
+        "label": "fake",
+        "domain": "social",
+        "lang": "en",
+    },
+    "gossipcop_real": {
+        "path": "gossipcop_real.csv",
+        "columns": {"text": "title"},
+        "label": "real",
+        "domain": "social",
+        "lang": "en",
+    },
+    "politifact_fake": {
+        "path": "politifact_fake.csv",
+        "columns": {"text": "title"},
+        "label": "fake",
+        "domain": "politics",
+        "lang": "en",
+    },
+    "politifact_real": {
+        "path": "politifact_real.csv",
+        "columns": {"text": "title"},
+        "label": "real",
+        "domain": "politics",
+        "lang": "en",
+    },
+}
+
 # ── Sequential Adversarial Pipeline ────────────────────────────────────────────
 SA_DIR = PROJECT_ROOT / "sequential_adversarial"
 
-# Gemini model to use (can be overridden by GOOGLE_GEMINI_MODEL env var)
+# LLM model to use
 import os as _os
-SA_MODEL_NAME = _os.getenv("GOOGLE_GEMINI_MODEL", "gemini-1.5-flash")
+SA_MODEL_NAME = _os.getenv("SA_MODEL_NAME", "qwen/qwen3.5-122b-a10b")
 
 # SQLite database for persistence (Stage 7)
 SA_DB_PATH = SA_DIR / "data" / "verity_reports.db"

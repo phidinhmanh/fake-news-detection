@@ -28,6 +28,8 @@ from torch.utils.data import DataLoader, TensorDataset
 from peft import LoraConfig, TaskType, get_peft_model
 from tqdm import tqdm
 
+from config import TFIDF_MAX_FEATURES
+
 # ============== CONFIG ==============
 DATA_PATH = "data/raw/fakenewsnet_clean.csv"
 N_SPLITS = 5
@@ -76,7 +78,7 @@ def train_baseline_cv(X, y, n_splits=5):
         y_train, y_val = y[train_idx], y[val_idx]
         
         pipeline = Pipeline([
-            ('tfidf', TfidfVectorizer(max_features=5000, ngram_range=(1, 2))),
+            ('tfidf', TfidfVectorizer(max_features=TFIDF_MAX_FEATURES, ngram_range=(1, 2))),
             ('clf', LogisticRegression(max_iter=1000, class_weight='balanced'))
         ])
         

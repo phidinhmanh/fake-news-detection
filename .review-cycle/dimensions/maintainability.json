@@ -1,0 +1,29 @@
+[
+  {
+    "dimension": "maintainability",
+    "review_id": "review-20260418-fullcodebase",
+    "analysis_timestamp": "2026-04-18T00:00:00Z",
+    "cli_tool_used": "gemini",
+    "model": "gemini",
+    "analysis_duration_ms": 600000,
+    "summary": {
+      "total_findings": 47,
+      "critical": 0,
+      "high": 8,
+      "medium": 22,
+      "low": 17,
+      "files_analyzed": 25,
+      "lines_reviewed": 10517
+    },
+    "findings": [
+      {"id": "maint-001-magic-port", "severity": "medium", "category": "magic-number", "title": "Hardcoded API port 8000", "snippet": "API_PORT = 8000", "file": "config.py", "line": 47, "impact": "Port number should be configurable via environment variable", "cross_references": []},
+      {"id": "maint-002-magic-max-text", "severity": "medium", "category": "magic-number", "title": "Hardcoded MAX_TEXT_LENGTH 2048", "snippet": "MAX_TEXT_LENGTH = 2048", "file": "config.py", "line": 52, "impact": "Text length limit hardcoded; should be aligned with model max seq length", "cross_references": ["config.py:61 - DEFAULT_MAX_SEQ_LEN = 256"]},
+      {"id": "maint-003-magic-max-features", "severity": "medium", "category": "magic-number", "title": "Hardcoded max_features=5000 in TF-IDF vectorizers", "snippet": "TfidfVectorizer(max_features=5000, ngram_range=(1, 2))", "file": "model/baseline_logreg.py", "line": 19, "impact": "Vocabulary size hardcoded across 3 files", "cross_references": ["train_cv_simple.py:70", "train_cv_comparison.py:79"]},
+      {"id": "maint-009-long-method-train-curriculum", "severity": "high", "category": "long-method", "title": "Function train_with_curriculum exceeds 100 lines", "snippet": "def train_with_curriculum(...) - 138 lines", "file": "model/train.py", "line": 375, "impact": "Long function with multiple responsibilities; should be refactored", "cross_references": []},
+      {"id": "maint-010-long-method-attention-explain", "severity": "high", "category": "long-method", "title": "Function _attention_explain exceeds 100 lines", "snippet": "def _attention_explain(...) - 107 lines", "file": "model/predictor.py", "line": 364, "impact": "Complex token aggregation logic; should be extracted to helper", "cross_references": []}
+    ],
+    "cross_references": [
+      {"issue_a": "maint-003-magic-max-features", "issue_b": "maint-003-magic-max-features", "relation": "Related - same magic number used in duplicate code"}
+    ]
+  }
+]

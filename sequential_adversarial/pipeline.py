@@ -27,13 +27,23 @@ from typing import Optional
 
 # Tools & LLM Clients
 from sequential_adversarial.input_processor import InputProcessor
-from sequential_adversarial.llm_client import LLMClient
+from sequential_adversarial.llm_client import BaseLLMProvider, LLMClientFactory
 
 # Contract Models (Pydantic schemas giúp ép Schema Output cho LLM và Auto-complete IDE)
 from sequential_adversarial.models import (
     Claim, ClaimAnalysis, InvestigationResult, AnalysisResult,
     BiasReport, VerityReport, PipelineResult, TFIDFComparison
 )
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+
+@dataclass
+class PipelineResources:
+    """Container for shared resources to avoid redundant loading."""
+    llm: BaseLLMProvider
+    searcher: Optional[Any] = None
+    tfidf_model: Optional[Any] = None
+    input_processor: Optional[InputProcessor] = None
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +65,7 @@ Respond ONLY with valid JSON exactly matching the requested schema.
 {text}
 """
 
-    def __init__(self, llm: LLMClient):
+    def __init__(self, llm: BaseLLMProvider):
         self.llm = llm
 
     def process(self, result: PipelineResult) -> PipelineResult:
@@ -103,16 +113,18 @@ Respond ONLY with valid JSON exactly matching the requested schema.
 {payload_json}
 """
 
-    def __init__(self, llm: LLMClient, evidence_searcher=None):
+    def __init__(self, llm: BaseLLMProvider, evidence_searcher=None):
         self.llm = llm
         self.searcher = evidence_searcher
 
     def process(self, result: PipelineResult) -> PipelineResult:
         logger.info("📚 [Stage 3] DataAnalyst: Đang thu thập và đối chiếu Bằng Chứng Thực Tế...")
         
-        # Gọi RAG Searcher cho từng claim
-        payload = []
-        for claim in result.claims:
+        # Optimize: Parallel RAG Search
+        if not result.claims:
+            return result
+            
+        def _fetch_evidence(claim):
             evidence_data = []
             if self.searcher:
                 try:
@@ -120,11 +132,14 @@ Respond ONLY with valid JSON exactly matching the requested schema.
                     evidence_data = [e.model_dump() for e in ce.evidences]
                 except Exception as exc:
                     logger.warning(f"⚠️ Không thể RAG cho claim '{claim.text[:30]}...': {exc}")
-                    
-            payload.append({
+            return {
                 "claim": claim.model_dump(),
                 "gathered_real_evidence": evidence_data
-            })
+            }
+
+        logger.info(f"⚡ [Stage 3] Đang thực hiện search song song cho {len(result.claims)} claims...")
+        with ThreadPoolExecutor() as executor:
+            payload = list(executor.map(_fetch_evidence, result.claims))
             
         payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
         prompt = self.PROMPT_TEMPLATE.format(payload_json=payload_json)
@@ -168,7 +183,7 @@ Respond ONLY with valid JSON exactly matching the requested schema.
 {analysis_json}
 """
 
-    def __init__(self, llm: LLMClient):
+    def __init__(self, llm: BaseLLMProvider):
         self.llm = llm
 
     def process(self, result: PipelineResult) -> PipelineResult:
@@ -215,7 +230,7 @@ Analysis: {analysis_json}
 Bias Report: {bias_json}
 """
 
-    def __init__(self, llm: LLMClient):
+    def __init__(self, llm: BaseLLMProvider):
         self.llm = llm
 
     def process(self, result: PipelineResult) -> PipelineResult:
@@ -393,18 +408,19 @@ class TFIDFComparator:
     Mục đích: Nếu LLM ảo giác (Hallucination), model cơ bản này có thể dấy lên hồi chuông cảnh báo.
     """
 
-    def __init__(self, mock: bool = False):
+    def __init__(self, mock: bool = False, model=None):
         self.mock = mock
-        self._model = None
+        self._model = model
 
     def _load_model(self):
         """Lazy load model: Nghĩa là chỉ truy xuất HDD lấy mô hình khi Stage 8 thực sự chạy."""
-        if self._model is None:
+        if self._model is None and not self.mock:
             try:
                 from model.baseline_logreg import BaselineLogReg
                 model = BaselineLogReg()
                 model.load()
                 self._model = model
+                logger.info("⚡ [Stage 8] TF-IDF model loaded successfully.")
             except Exception as exc:
                 logger.warning(f"⚠️ [Stage 8] Nạp model cổ điển thất bại, file pkl chưa có? - {exc}")
                 self._model = None
@@ -472,21 +488,32 @@ class SequentialAdversarialPipeline:
         print(result.verity_report.conclusion)
     """
 
-    def __init__(self, llm: Optional[LLMClient] = None, mock: bool = False):
-        self.llm = llm or LLMClient(mock=mock)
-        self.input_processor = InputProcessor()
-        
-        # Khởi tạo Evidence Searcher (RAG System)
-        searcher = None
-        if not mock:
-            try:
-                from agents.knowledge_base import KnowledgeBase
-                from agents.evidence_searcher import EvidenceSearcher
-                kb = KnowledgeBase()
-                searcher = EvidenceSearcher(knowledge_base=kb)
-                logger.info("✅ Tích hợp EvidenceSearcher RAG thành công.")
-            except Exception as exc:
-                logger.warning(f"⚠️ Khởi tạo RAG thất bại: {exc}. Stage 3 sẽ không có RAG.")
+    def __init__(self, llm: Optional[BaseLLMProvider] = None, mock: bool = False, resources: Optional[PipelineResources] = None):
+        if resources:
+            self.llm = resources.llm
+            self.input_processor = resources.input_processor or InputProcessor()
+            searcher = resources.searcher
+            tfidf_model = resources.tfidf_model
+        else:
+            if llm is None:
+                from config import LLM_PROVIDER
+                self.llm = LLMClientFactory.create(LLM_PROVIDER, mock=mock)
+            else:
+                self.llm = llm
+            self.input_processor = InputProcessor()
+            
+            # Khởi tạo Evidence Searcher (RAG System)
+            searcher = None
+            tfidf_model = None
+            if not mock:
+                try:
+                    from agents.knowledge_base import KnowledgeBase
+                    from agents.evidence_searcher import EvidenceSearcher
+                    kb = KnowledgeBase()
+                    searcher = EvidenceSearcher(knowledge_base=kb)
+                    logger.info("✅ Tích hợp EvidenceSearcher RAG thành công.")
+                except Exception as exc:
+                    logger.warning(f"⚠️ Khởi tạo RAG thất bại: {exc}. Stage 3 sẽ không có RAG.")
         
         # Array này chứa List TẤT CẢ các bước, được pass con trỏ `result` theo dòng chảy
         self.stages = [
@@ -496,8 +523,54 @@ class SequentialAdversarialPipeline:
             Synthesizer(self.llm),
             VisualEngine(),
             Persistence(),
-            TFIDFComparator(mock=mock),
+            TFIDFComparator(mock=mock, model=tfidf_model),
         ]
+
+    @classmethod
+    def load_resources(cls, provider_name: Optional[str] = None, mock: bool = False) -> PipelineResources:
+        """Pre-load all heavy resources for the pipeline."""
+        logger.info("🏗️  [Pipeline] Đang khởi tạo tài nguyên hệ thống (Pre-loading)...")
+        
+        # 1. LLM Client
+        if provider_name is None:
+            from config import LLM_PROVIDER
+            provider_name = LLM_PROVIDER
+        llm = LLMClientFactory.create(provider_name, mock=mock)
+        
+        # 2. Input Processor
+        input_processor = InputProcessor()
+        
+        # 3. RAG Searcher
+        searcher = None
+        if not mock:
+            try:
+                from agents.knowledge_base import KnowledgeBase
+                from agents.evidence_searcher import EvidenceSearcher
+                kb = KnowledgeBase()
+                # Warm up KnowledgeBase (load encoder)
+                kb._get_encoder()
+                searcher = EvidenceSearcher(knowledge_base=kb)
+                logger.info("✅ Tải RAG Searcher thành công.")
+            except Exception as exc:
+                logger.warning(f"⚠️ Không thể tải RAG Searcher: {exc}")
+
+        # 4. TF-IDF Model
+        tfidf_model = None
+        if not mock:
+            try:
+                from model.baseline_logreg import BaselineLogReg
+                tfidf_model = BaselineLogReg()
+                tfidf_model.load()
+                logger.info("✅ Tải TF-IDF Baseline model thành công.")
+            except Exception as exc:
+                logger.warning(f"⚠️ Không thể tải TF-IDF model: {exc}")
+                
+        return PipelineResources(
+            llm=llm,
+            searcher=searcher,
+            tfidf_model=tfidf_model,
+            input_processor=input_processor
+        )
 
     def run(self, source: str) -> PipelineResult:
         logger.info(f"🚀 [Pipeline] BẮT ĐẦU VẬN HÀNH: Đọc nguồn '{source[:60]}...'")

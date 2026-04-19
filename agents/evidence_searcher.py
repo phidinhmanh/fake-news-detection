@@ -236,7 +236,7 @@ class EvidenceSearcher:
             if serper.api_key:
                 self._providers.append(serper)
             else:
-                logger.info("⚠️ Serper API key not set, skipping Serper search.")
+                logger.info("ℹ️ Serper API key not set. skipping external Google search (will stick to Wikipedia + Local KB).")
 
     def search_single_claim(self, claim_text: str) -> ClaimEvidence:
         """Tìm evidence cho 1 claim.
@@ -291,7 +291,7 @@ class EvidenceSearcher:
         )
 
     def search_claims(self, claims: list[str]) -> EvidenceSearchResult:
-        """Tìm evidence cho nhiều claims.
+        """Tìm evidence cho nhiều claims (Song song).
 
         Args:
             claims: List of claim strings.
@@ -299,15 +299,16 @@ class EvidenceSearcher:
         Returns:
             EvidenceSearchResult object.
         """
-        logger.info(f"🔎 [Agent 2] Searching evidence for {len(claims)} claims...")
+        logger.info(f"🔎 [Agent 2] Searching evidence for {len(claims)} claims (Parallel)...")
 
-        claim_evidences: list[ClaimEvidence] = []
+        from concurrent.futures import ThreadPoolExecutor
+        
+        with ThreadPoolExecutor() as executor:
+            claim_evidences = list(executor.map(self.search_single_claim, claims))
+
         sources_used: set[str] = set()
         total = 0
-
-        for claim_text in claims:
-            ce = self.search_single_claim(claim_text)
-            claim_evidences.append(ce)
+        for ce in claim_evidences:
             total += len(ce.evidences)
             for e in ce.evidences:
                 sources_used.add(e.source)

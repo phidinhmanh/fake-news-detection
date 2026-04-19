@@ -1,0 +1,189 @@
+[
+  {
+    "dimension": "architecture",
+    "review_id": "review-20260418-fullcodebase",
+    "analysis_timestamp": "2026-04-18T00:00:00Z",
+    "cli_tool_used": "gemini",
+    "model": "gemini",
+    "analysis_duration_ms": 600000,
+    "summary": {
+      "total_findings": 12,
+      "critical": 2,
+      "high": 6,
+      "medium": 3,
+      "low": 1,
+      "files_analyzed": 14,
+      "lines_reviewed": 3626
+    },
+    "findings": [
+      {
+        "id": "arch-001-solid-srp-god-class",
+        "severity": "critical",
+        "category": "solid-violation",
+        "title": "SRP Violation: Predictor class has 5+ responsibilities",
+        "file": "model/predictor.py",
+        "line": 49,
+        "impact": "Predictor violates SRP by combining ensemble prediction coordination, domain classification with keyword fallback, SHAP/attention explanations, mock prediction logic, keyword-based explanations",
+        "cross_references": [
+          "model/ensemble.py",
+          "model/predictor.py:255-318"
+        ]
+      },
+      {
+        "id": "arch-002-solid-srp-ensemble-multiple",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "SRP Violation: EnsembleClassifier handles prediction, caching, and optimization",
+        "file": "model/ensemble.py",
+        "line": 46,
+        "impact": "EnsembleClassifier has three distinct responsibilities that should be separate classes",
+        "cross_references": [
+          "model/predictor.py:114-138"
+        ]
+      },
+      {
+        "id": "arch-003-solid-srp-train-mixed",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "SRP Violation: FakeNewsClassifier and CurriculumLearningScheduler in same file",
+        "file": "model/train.py",
+        "line": 55,
+        "impact": "train.py contains LightningModule wrapper AND curriculum learning scheduler AND training orchestration",
+        "cross_references": [
+          "model/train.py:264-358"
+        ]
+      },
+      {
+        "id": "arch-004-solid-ocp-domain-hardcoded",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "OCP Violation: _classify_domain has hardcoded domain keywords",
+        "file": "model/predictor.py",
+        "line": 281,
+        "impact": "Adding new domains requires modifying Predictor class directly. Should use Strategy pattern",
+        "cross_references": [
+          "config.py"
+        ]
+      },
+      {
+        "id": "arch-005-solid-ocp-preprocessing",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "OCP Violation: load_raw_data has hardcoded dataset file paths",
+        "file": "data/preprocessing.py",
+        "line": 78,
+        "impact": "Adding new dataset sources requires modifying preprocessing.py. Should use factory pattern",
+        "cross_references": [
+          "data/datamodule.py"
+        ]
+      },
+      {
+        "id": "arch-006-solid-dip-predictor-ensemble",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "DIP Violation: Predictor depends on concrete EnsembleClassifier",
+        "file": "model/predictor.py",
+        "line": 34,
+        "impact": "High-level Predictor module depends on low-level EnsembleClassifier concrete implementation",
+        "cross_references": [
+          "model/ensemble.py"
+        ]
+      },
+      {
+        "id": "arch-007-solid-dip-ui-concrete",
+        "severity": "high",
+        "category": "solid-violation",
+        "title": "DIP Violation: ui/app.py imports concrete model classes",
+        "file": "ui/app.py",
+        "line": 184,
+        "impact": "UI module directly depends on concrete model implementations",
+        "cross_references": [
+          "model/predictor.py",
+          "api/main.py"
+        ]
+      },
+      {
+        "id": "arch-008-solid-srp-ui-mixed",
+        "severity": "medium",
+        "category": "solid-violation",
+        "title": "SRP Violation: ui/app.py mixes UI setup, input handling, and analysis",
+        "file": "ui/app.py",
+        "line": 25,
+        "impact": "app.py handles page config, sidebar, tabs, input processing, analysis execution, and result display",
+        "cross_references": [
+          "ui/components/"
+        ]
+      },
+      {
+        "id": "arch-009-solid-srp-pipeline-stages",
+        "severity": "medium",
+        "category": "solid-violation",
+        "title": "SRP Violation: pipeline.py contains 8 stage classes plus orchestrator",
+        "file": "sequential_adversarial/pipeline.py",
+        "line": 44,
+        "impact": "pipeline.py has 8 stage classes plus main orchestrator. Each stage should be in separate files",
+        "cross_references": [
+          "sequential_adversarial/llm_client.py"
+        ]
+      },
+      {
+        "id": "arch-010-solid-srp-llm-client",
+        "severity": "medium",
+        "category": "solid-violation",
+        "title": "SRP Violation: llm_client.py has 7 LLM provider classes",
+        "file": "sequential_adversarial/llm_client.py",
+        "line": 136,
+        "impact": "llm_client.py contains 7 classes. Each provider should be in separate module",
+        "cross_references": [
+          "sequential_adversarial/pipeline.py"
+        ]
+      },
+      {
+        "id": "arch-011-solid-isp-ensemble-interface",
+        "severity": "low",
+        "category": "solid-violation",
+        "title": "ISP Violation: EnsembleClassifier interface is too broad",
+        "file": "model/ensemble.py",
+        "line": 179,
+        "impact": "EnsembleClassifier exposes 15+ methods. Should split into PredictionInterface, ModelLoader, WeightOptimizer",
+        "cross_references": [
+          "model/predictor.py"
+        ]
+      },
+      {
+        "id": "arch-012-solid-lsp-llm-providers",
+        "severity": "low",
+        "category": "solid-violation",
+        "title": "LSP Violation: LLM providers may have inconsistent mock behavior",
+        "file": "sequential_adversarial/llm_client.py",
+        "line": 203,
+        "impact": "Each LLM provider has its own _mock_generate implementation with different error handling",
+        "cross_references": [
+          "sequential_adversarial/pipeline.py"
+        ]
+      }
+    ],
+    "cross_references": [
+      {
+        "source": "arch-001-solid-srp-god-class",
+        "target": "model/ensemble.py",
+        "type": "uses"
+      },
+      {
+        "source": "arch-006-solid-dip-predictor-ensemble",
+        "target": "model/ensemble.py",
+        "type": "depends_on"
+      },
+      {
+        "source": "arch-007-solid-dip-ui-concrete",
+        "target": "model/predictor.py",
+        "type": "should_depend_on"
+      },
+      {
+        "source": "arch-004-solid-ocp-domain-hardcoded",
+        "target": "config.py",
+        "type": "should_use"
+      }
+    ]
+  }
+]

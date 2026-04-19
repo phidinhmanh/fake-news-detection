@@ -31,7 +31,6 @@ from typing import Any, Dict, Optional
 import lightning as L
 import numpy as np
 import torch
-import torch.nn.functional as F
 import yaml
 from peft import LoraConfig, TaskType, get_peft_model
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
@@ -50,6 +49,7 @@ from config import (
 )
 from data.datamodule import FakeNewsDataModule
 from data.preprocessing import preprocess_to_normalized
+from model.curriculum_scheduler import CurriculumLearningScheduler
 
 
 class FakeNewsClassifier(L.LightningModule):
@@ -259,103 +259,6 @@ class FakeNewsClassifier(L.LightningModule):
             }
 
         return optimizer
-
-
-class CurriculumLearningScheduler:
-    """Curriculum Learning scheduler that orders samples from easy to hard.
-
-    Strategy: Start with high-confidence samples and gradually introduce
-    harder samples as training progresses.
-    """
-
-    def __init__(
-        self,
-        dataset,
-        num_epochs: int,
-        initial_ratio: float = 0.5,
-        final_ratio: float = 1.0,
-        difficulty_metric: str = "loss",
-    ):
-        """
-        Args:
-            dataset: The training dataset.
-            num_epochs: Total number of training epochs.
-            initial_ratio: Ratio of easy samples to use in first epoch.
-            final_ratio: Ratio to use in final epoch (typically 1.0).
-            difficulty_metric: Metric to determine difficulty ("loss" or "confidence").
-        """
-        self.dataset = dataset
-        self.num_epochs = num_epochs
-        self.initial_ratio = initial_ratio
-        self.final_ratio = final_ratio
-        self.difficulty_metric = difficulty_metric
-        self.sample_difficulties = None
-
-    def compute_difficulties(self, model, device="cuda"):
-        """Compute difficulty scores for all samples in the dataset.
-
-        Args:
-            model: The model to use for computing difficulties.
-            device: Device to run inference on.
-
-        Returns:
-            Array of difficulty scores (higher = harder).
-        """
-        model.eval()
-        difficulties = []
-
-        dataloader = DataLoader(self.dataset, batch_size=32, shuffle=False)
-
-        with torch.no_grad():
-            for batch in dataloader:
-                input_ids = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                labels = batch["label"].to(device)
-
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    labels=labels,
-                )
-
-                if self.difficulty_metric == "loss":
-                    # Use per-sample loss as difficulty
-                    logits = outputs.logits
-                    loss = F.cross_entropy(logits, labels, reduction="none")
-                    difficulties.extend(loss.cpu().numpy().tolist())
-                elif self.difficulty_metric == "confidence":
-                    # Use (1 - max_prob) as difficulty
-                    logits = outputs.logits
-                    probs = F.softmax(logits, dim=-1)
-                    max_probs = torch.max(probs, dim=-1)[0]
-                    difficulty = 1.0 - max_probs
-                    difficulties.extend(difficulty.cpu().numpy().tolist())
-
-        model.train()
-        self.sample_difficulties = np.array(difficulties)
-        return self.sample_difficulties
-
-    def get_curriculum_indices(self, epoch: int) -> np.ndarray:
-        """Get sample indices for the current epoch based on curriculum.
-
-        Args:
-            epoch: Current epoch number (0-indexed).
-
-        Returns:
-            Array of sample indices to use for training.
-        """
-        if self.sample_difficulties is None:
-            raise ValueError("Must call compute_difficulties() first")
-
-        # Linear interpolation of difficulty ratio
-        ratio = self.initial_ratio + (self.final_ratio - self.initial_ratio) * (epoch / max(self.num_epochs - 1, 1))
-        num_samples = int(len(self.dataset) * ratio)
-
-        # Sort samples by difficulty (easy first)
-        sorted_indices = np.argsort(self.sample_difficulties)
-
-        # Return the easiest samples up to the current ratio
-        return sorted_indices[:num_samples]
 
 
 def load_config(config_path: Path) -> Dict[str, Any]:

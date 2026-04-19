@@ -118,19 +118,17 @@ class WeightedTrainer(Trainer):
         else:
             logits = outputs.logits
 
-        # If class weights provided, compute weighted loss
-        if self.class_weights is not None and labels is not None:
-            loss_fct = nn.CrossEntropyLoss(weight=self.class_weights.to(model.device))
+        if labels is not None:
+            device = getattr(model, "device", next(model.parameters()).device)
+            weight = self.class_weights.to(device) if self.class_weights is not None else None
+            # Use label smoothing from TrainingArguments and class weights
+            loss_fct = nn.CrossEntropyLoss(weight=weight, label_smoothing=self.args.label_smoothing_factor)
             loss = loss_fct(logits.view(-1, 2), labels.view(-1))
         else:
             if isinstance(outputs, dict):
                 loss = outputs.get("loss")
             else:
                 loss = outputs.loss
-            
-            if loss is None and labels is not None:
-                loss_fct = nn.CrossEntropyLoss()
-                loss = loss_fct(logits.view(-1, 2), labels.view(-1))
 
         return (loss, outputs) if return_outputs else loss
 
@@ -144,6 +142,13 @@ def main() -> None:
     parser.add_argument("--max-seq-len", type=int, default=PHOBERT_MAX_SEQ_LEN)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--model-name", type=str, default=PHOBERT_MODEL_NAME, help="Model from HuggingFace")
+    parser.add_argument("--lr-scheduler-type", type=str, default="linear", 
+                        choices=["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup", "inverse_sqrt", "reduce_lr_on_plateau"],
+                        help="The scheduler type to use.")
+    parser.add_argument("--weight-decay", type=float, default=0.01, help="Weight decay for AdamW if we apply some.")
+    parser.add_argument("--warmup-ratio", type=float, default=0.1, help="Linear warmup over warmup_ratio fraction of total steps.")
+    parser.add_argument("--dropout", type=float, default=0.1, help="Dropout probability for hidden layers and attention.")
+    parser.add_argument("--label-smoothing-factor", type=float, default=0.0, help="Label smoothing factor (e.g. 0.1).")
     
     args = parser.parse_args()
     set_seed(args.seed)
@@ -199,7 +204,7 @@ def main() -> None:
             features=val_features, tokenizer=tokenizer, max_length=args.max_seq_len,
         )
 
-        model = PhoBERTWithFeatures(model_name=args.model_name, num_labels=2, class_weights=class_weights)
+        model = PhoBERTWithFeatures(model_name=args.model_name, num_labels=2, class_weights=class_weights, dropout=args.dropout)
         
     else:
         from model.phobert_baseline import PhoBERTDataset
@@ -212,7 +217,12 @@ def main() -> None:
             tokenizer=tokenizer, max_length=args.max_seq_len,
         )
 
-        model = AutoModelForSequenceClassification.from_pretrained(args.model_name, num_labels=2)
+        model = AutoModelForSequenceClassification.from_pretrained(
+            args.model_name, 
+            num_labels=2,
+            hidden_dropout_prob=args.dropout,
+            attention_probs_dropout_prob=args.dropout
+        )
 
 
     MODELS_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -225,9 +235,10 @@ def main() -> None:
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.lr,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        lr_scheduler_type="linear",
+        weight_decay=args.weight_decay,
+        warmup_ratio=args.warmup_ratio,
+        lr_scheduler_type=args.lr_scheduler_type,
+        label_smoothing_factor=args.label_smoothing_factor,
         logging_steps=100,
         eval_strategy="epoch",  
         save_strategy="epoch",

@@ -11,12 +11,12 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import f1_score, classification_report
 
-from config import MODELS_ARTIFACTS_DIR, TARGET_BASELINE_F1
+from config import MODELS_ARTIFACTS_DIR, TARGET_BASELINE_F1, TFIDF_MAX_FEATURES
 
 class BaselineLogReg:
     """Baseline model using TF-IDF and Logistic Regression."""
 
-    def __init__(self, max_features=5000):
+    def __init__(self, max_features: int = TFIDF_MAX_FEATURES):
         self.pipeline = Pipeline([
             ('tfidf', TfidfVectorizer(max_features=max_features, ngram_range=(1, 2))),
             ('clf', LogisticRegression(max_iter=1000, class_weight='balanced'))

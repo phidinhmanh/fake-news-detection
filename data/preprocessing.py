@@ -1,13 +1,16 @@
-"""
-preprocessing.py — Data Preprocessing Pipeline
+"""preprocessing.py — Data Preprocessing Pipeline
 =================================================
 Người A phát triển.
 
+Refactored (ARCH-004 fix):
+    - Dataset paths moved to config.py registry (OCP fix)
+    - Factory pattern for adding new datasets
+
 TODO (Tuần 1-2):
-    - [x] Text cleaning (remove HTML, normalize whitespace)
-    - [x] Vietnamese text preprocessing (underthesea word_tokenize)
-    - [x] English text preprocessing
-    - [x] Schema normalization cho VFND + FakeNewsNet
+- [x] Text cleaning (remove HTML, normalize whitespace)
+- [x] Vietnamese text preprocessing (underthesea word_tokenize)
+- [x] English text preprocessing
+- [x] Schema normalization cho VFND + FakeNewsNet
 """
 
 from __future__ import annotations
@@ -17,9 +20,7 @@ from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from config import NORMALIZED_DIR, RAW_DATA_DIR
-
-# from underthesea import word_tokenize
+from config import NORMALIZED_DIR, RAW_DATA_DIR, DATASET_REGISTRY
 
 
 def clean_text(text: str) -> str:
@@ -28,14 +29,13 @@ def clean_text(text: str) -> str:
         return ""
     import re
 
-    text = re.sub(r"<[^>]+>", "", text)  # Remove HTML
-    text = re.sub(r"\s+", " ", text)  # Normalize whitespace
+    text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
 def preprocess_vi(text: str) -> str:
     """Tiền xử lý tiếng Việt: word_tokenize + lowercase."""
-    # TODO: Implement with underthesea
     return text.lower()
 
 
@@ -60,13 +60,8 @@ def preprocess(text: str, lang: str = "vi") -> str:
     return preprocess_en(text)
 
 
-def load_raw_data() -> pd.DataFrame:
-    """Load all raw CSV files and normalize to a single DataFrame.
-
-    Handles different schemas:
-    - fakenewsnet_clean.csv: news_id, news_url, text, source, label, label_binary, tweet_ids
-    - gossipcop_fake.csv / gossipcop_real.csv: id, news_url, title, tweet_ids
-    - politifact_fake.csv / politifact_real.csv: same as gossipcop
+def _load_dataset_registry() -> pd.DataFrame:
+    """Load datasets using registry from config.py.
 
     Returns:
         DataFrame with columns: text, label, domain, lang
@@ -74,71 +69,48 @@ def load_raw_data() -> pd.DataFrame:
     dfs = []
     raw_dir = Path(RAW_DATA_DIR)
 
-    # Load fakenewsnet_clean.csv
-    fakenewsnet_path = raw_dir / "fakenewsnet_clean.csv"
-    if fakenewsnet_path.exists():
-        df_fn = pd.read_csv(fakenewsnet_path)
-        df_fn = df_fn[["text", "label_binary"]].copy()
-        df_fn.columns = ["text", "label"]
-        df_fn["domain"] = "social"
-        df_fn["lang"] = "en"
-        df_fn["label"] = df_fn["label"].map({1: "fake", 0: "real"})
-        dfs.append(df_fn)
+    for dataset_name, spec in DATASET_REGISTRY.items():
+        filepath = raw_dir / spec["path"]
+        if not filepath.exists():
+            continue
 
-    # Load gossipcop_fake.csv
-    gossipcop_fake_path = raw_dir / "gossipcop_fake.csv"
-    if gossipcop_fake_path.exists():
-        df_gf = pd.read_csv(gossipcop_fake_path)
-        df_gf = df_gf[["title"]].copy()
-        df_gf.columns = ["text"]
-        df_gf["label"] = "fake"
-        df_gf["domain"] = "social"
-        df_gf["lang"] = "en"
-        dfs.append(df_gf)
+        try:
+            df = pd.read_csv(filepath)
+            columns = spec["columns"]
 
-    # Load gossipcop_real.csv
-    gossipcop_real_path = raw_dir / "gossipcop_real.csv"
-    if gossipcop_real_path.exists():
-        df_gr = pd.read_csv(gossipcop_real_path)
-        df_gr = df_gr[["title"]].copy()
-        df_gr.columns = ["text"]
-        df_gr["label"] = "real"
-        df_gr["domain"] = "social"
-        df_gr["lang"] = "en"
-        dfs.append(df_gr)
+            if "label" in columns:
+                df = df[[columns["text"], columns["label"]]].copy()
+                df.columns = ["text", "label"]
+                if "label_map" in spec:
+                    df["label"] = df["label"].map(spec["label_map"])
+            else:
+                df = df[[columns["text"]]].copy()
+                df.columns = ["text"]
+                df["label"] = spec["label"]
 
-    # Load politifact_fake.csv
-    politifact_fake_path = raw_dir / "politifact_fake.csv"
-    if politifact_fake_path.exists():
-        df_pf = pd.read_csv(politifact_fake_path)
-        df_pf = df_pf[["title"]].copy()
-        df_pf.columns = ["text"]
-        df_pf["label"] = "fake"
-        df_pf["domain"] = "politics"
-        df_pf["lang"] = "en"
-        dfs.append(df_pf)
+            df["domain"] = spec["domain"]
+            df["lang"] = spec["lang"]
+            dfs.append(df)
+        except Exception as e:
+            print(f"Warning: Failed to load {dataset_name}: {e}")
 
-    # Load politifact_real.csv
-    politifact_real_path = raw_dir / "politifact_real.csv"
-    if politifact_real_path.exists():
-        df_pr = pd.read_csv(politifact_real_path)
-        df_pr = df_pr[["title"]].copy()
-        df_pr.columns = ["text"]
-        df_pr["label"] = "real"
-        df_pr["domain"] = "politics"
-        df_pr["lang"] = "en"
-        dfs.append(df_pr)
+    return pd.concat(dfs, ignore_index=True) if dfs else None
 
-    if not dfs:
-        raise FileNotFoundError(f"No raw data found in {raw_dir}")
 
-    # Concatenate all dataframes
-    df = pd.concat(dfs, ignore_index=True)
+def load_raw_data() -> pd.DataFrame:
+    """Load all raw CSV files and normalize to a single DataFrame.
 
-    # Clean text
+    Uses DATASET_REGISTRY from config.py (factory pattern).
+
+    Returns:
+        DataFrame with columns: text, label, domain, lang
+    """
+    df = _load_dataset_registry()
+
+    if df is None or df.empty:
+        raise FileNotFoundError(f"No raw data found in {RAW_DATA_DIR}")
+
     df["text"] = df["text"].apply(clean_text)
-
-    # Drop rows with empty text
     df = df[df["text"].str.len() > 0].reset_index(drop=True)
 
     return df
@@ -161,10 +133,8 @@ def preprocess_to_normalized(
     Returns:
         Dictionary with keys 'train', 'val', 'test' containing DataFrames.
     """
-    # Load raw data
     df = load_raw_data()
 
-    # First split: train+val vs test
     train_val_ratio = 1 - test_ratio
     df_train_val, df_test = train_test_split(
         df,
@@ -173,7 +143,6 @@ def preprocess_to_normalized(
         stratify=df["label"],
     )
 
-    # Second split: train vs val
     val_adjusted_ratio = val_ratio / train_val_ratio
     df_train, df_val = train_test_split(
         df_train_val,
@@ -188,10 +157,8 @@ def preprocess_to_normalized(
         "test": df_test.reset_index(drop=True),
     }
 
-    # Ensure output directory exists
     NORMALIZED_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Save as parquet
     for split_name, split_df in splits.items():
         output_path = NORMALIZED_DIR / f"{split_name}.parquet"
         split_df.to_parquet(output_path, index=False)

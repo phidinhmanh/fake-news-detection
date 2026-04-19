@@ -8,11 +8,14 @@ Supports multiple LLM providers: Gemini, Gemma (Ollama), Qwen, Grok via factory 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
 from abc import ABC, abstractmethod
 from typing import Optional, Any
+
+logger = logging.getLogger(__name__)
 
 
 # ── Mock responses for each stage (used when GOOGLE_API_KEY is not set) ────────
@@ -459,7 +462,7 @@ class NvidiaLLMClient(BaseLLMProvider):
 
     def __init__(
         self,
-        model_name: str = "qwen/qwen3.5-122b-a10b",
+        model_name: str = "google/gemma-4-31b-it",
         api_key: Optional[str] = None,
         temperature: float = 0.6,
         mock: bool = False,
@@ -469,7 +472,13 @@ class NvidiaLLMClient(BaseLLMProvider):
         # Hard code API if user explicitly requests it otherwise use environment config
         self.api_key = api_key or NVIDIA_API_KEY
         self.temperature = temperature
-        self.mock = mock or not self.api_key
+        self.mock = mock
+
+        # Strict mode: If not mock, we MUST have an API key. 
+        # Don't silently switch to mock if the user wants 'real' testing.
+        if not self.mock and not self.api_key:
+             raise ValueError("NVIDIA_API_KEY is missing. Cannot run live pipeline. "
+                              "Check your .env file or environment variables.")
 
         self._client = None
         if not self.mock:
@@ -487,8 +496,8 @@ class NvidiaLLMClient(BaseLLMProvider):
                 max_completion_tokens=16384,
             )
         except ImportError:
-            print("[NvidiaLLMClient] WARNING: langchain_nvidia_ai_endpoints not installed.")
-            self.mock = True
+            logger.error("[NvidiaLLMClient] CRITICAL: langchain_nvidia_ai_endpoints not installed. Please run: pip install langchain-nvidia-ai-endpoints")
+            raise ImportError("langchain-nvidia-ai-endpoints required for real testing.")
 
     def generate(self, prompt: str, stage_key: str = "") -> str:
         """Generate response via Nvidia NIM API."""
@@ -499,16 +508,14 @@ class NvidiaLLMClient(BaseLLMProvider):
             lc_messages = [{"role": "user", "content": prompt}]
             full_content = ""
             for chunk in self._client.stream(lc_messages, chat_template_kwargs={"enable_thinking": True}):
-                # Currently we aren't storing the reasoning_content out of the pipeline, 
-                # but we can print it for debug visibility as the user requested in the code snippet.
                 if chunk.additional_kwargs and "reasoning_content" in chunk.additional_kwargs:
                     print(chunk.additional_kwargs["reasoning_content"], end="")
                 if chunk.content:
                     full_content += chunk.content
             return full_content
         except Exception as exc:
-            print(f"[NvidiaLLMClient] API error: {exc}. Falling back to mock.")
-            return self._mock_generate(stage_key)
+            logger.error(f"[NvidiaLLMClient] API error: {exc}")
+            raise exc
 
     def _mock_generate(self, stage_key: str) -> str:
         return _MOCK_RESPONSES.get(stage_key, json.dumps({"error": "unknown stage", "mock": True}))
