@@ -30,6 +30,8 @@ from config import DATASET_PROCESSED_DIR, EVAL_RESULTS_DIR
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+from sequential_adversarial.pipeline import SequentialAdversarialPipeline
+
 
 def run_ablation_study() -> list[dict]:
     """Run ablation study.

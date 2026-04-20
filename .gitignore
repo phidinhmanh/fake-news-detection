@@ -65,6 +65,8 @@ Thumbs.db
 .env.local
 .env.production
 
+visuals/
+
 # ── Project-specific ─────────────────────────────────
 api/
 saved_models/

@@ -1,343 +1,205 @@
 """
-app.py — Streamlit Web Demo: Vietnamese Fake News Detector
-=============================================================
-Upload text hoặc dán link → phân tích → hiển thị score, label, giải thích.
-
-Chạy:
-    streamlit run ui/app.py
+ui/app.py — Modern Streamlit UI for Fake News Detection
+======================================================
+Focuses on the 8-stage Sequential Adversarial Pipeline.
 """
 
 from __future__ import annotations
 
 import sys
-import logging
 from pathlib import Path
-
 import streamlit as st
+import logging
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from sequential_adversarial.pipeline import SequentialAdversarialPipeline
+from config import LLM_PROVIDER, SA_MODEL_NAME
+from security import sanitize_for_display, validate_text_input
+from exceptions import generate_correlation_id
+
 logger = logging.getLogger(__name__)
 
 # ── Page Config ────────────────────────────────────────
 st.set_page_config(
-    page_title="🔍 Vietnamese Fake News Detector",
-    page_icon="🔍",
+    page_title="Verity — AI Fake News Detector",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ── Custom CSS ─────────────────────────────────────────
+# ── Custom CSS (High Aesthetics) ─────────────────────────
 st.markdown("""
 <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
     .main-header {
         text-align: center;
-        padding: 20px 0;
+        padding: 40px 0;
+        background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+        border-radius: 20px;
+        color: white;
+        margin-bottom: 30px;
     }
-    .main-header h1 {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        font-size: 2.5rem;
-        font-weight: 800;
-    }
-    .metric-card {
-        background: #f8f9fa;
-        border-radius: 12px;
-        padding: 16px;
+    .verdict-box {
+        padding: 24px;
+        border-radius: 16px;
         text-align: center;
-        border: 1px solid #dee2e6;
+        color: white;
+        font-size: 2rem;
+        font-weight: 800;
+        margin-bottom: 20px;
     }
-    .stExpander {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-    }
-    div[data-testid="stVerticalBlock"] > div {
-        padding: 0;
+    .verdict-True { background: #10b981; }
+    .verdict-False { background: #ef4444; }
+    .verdict-Mixed { background: #f59e0b; }
+    
+    .stMetric {
+        background: #f8fafc;
+        padding: 15px;
+        border-radius: 12px;
+        border: 1px solid #e2e8f0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-
 # ── Sidebar ────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## ⚙️ Cài đặt")
-
-    analysis_mode = st.selectbox(
-        "🔧 Chế độ phân tích",
-        options=["AI Agent Pipeline", "PhoBERT Baseline", "Cả hai (so sánh)"],
-        index=0,
-        help="Chọn model để phân tích bài viết",
-    )
-
-    use_wikipedia = st.checkbox("📖 Search Wikipedia VN", value=True, help="Bật search Wikipedia cho evidence")
-    mock_mode = st.checkbox("🧪 Mock Mode (không cần API)", value=False, help="Dùng mock data cho testing")
-
+    st.image("https://img.icons8.com/isometric/512/shield.png", width=100)
+    st.title("Verity Settings")
+    
+    selected_provider = st.selectbox("LLM Provider", ["gemini", "nvidia", "openai", "qwen", "grok", "gemma"], index=0)
+    mock_mode = st.toggle("Mock Mode (Fast Test)", value=False)
+    
     st.divider()
+    st.caption(f"Backend: {SA_MODEL_NAME}")
+    st.caption("UET Fake News Project — 2026")
 
-    # History
-    st.markdown("### 📜 Lịch sử phân tích")
-    if "history" not in st.session_state:
-        st.session_state.history = []
+# ── Main UI ──────────────────────────────────────────
+st.markdown('<div class="main-header"><h1>🛡️ Verity: Sequential Adversarial Analysis</h1><p>Phát hiện tin giả tiếng Việt bằng hệ thống 8 tầng liên hoàn</p></div>', unsafe_allow_html=True)
 
-    if st.session_state.history:
-        for i, h in enumerate(reversed(st.session_state.history[-5:])):
-            emoji = {"Real": "🟢", "Fake": "🔴", "Suspicious": "🟡"}.get(h["label"], "⚪")
-            st.caption(f"{emoji} {h['label']} ({h['score']}%) — {h['text'][:30]}...")
+# Input Section
+input_col, help_col = st.columns([3, 1])
+
+with input_col:
+    source_input = st.text_area("Dán nội dung hoặc URL bài viết", height=200, placeholder="Nhập văn bản cần kiểm tra...")
+
+with help_col:
+    st.info("""
+    **Cách hoạt động:**
+    1. Trích xuất luận điểm.
+    2. Đối chứng RAG (Wikipedia/DB).
+    3. Phản biện định kiến.
+    4. Tổng hợp phán quyết.
+    5. Đối soát TF-IDF Baseline.
+    """)
+
+if st.button("🚀 BẮT ĐẦU PHÂN TÍCH", type="primary", use_container_width=True):
+    # Validate input (FR-1.1, FR-1.2)
+    is_valid, error_msg = validate_text_input(source_input)
+    if not is_valid:
+        st.error(f"Vui lòng nhập nội dung hợp lệ: {error_msg}")
     else:
-        st.caption("Chưa có lịch sử phân tích.")
+        # Sanitize input before processing
+        clean_input = sanitize_for_display(source_input)
+        correlation_id = generate_correlation_id()
 
-    st.divider()
-    st.markdown(
-        """
-        ### 📄 About
-        **Vietnamese Fake News Detector**
-        - ViFactCheck (AAAI 2025)
-        - PhoBERT + LLM Agent Pipeline
-        - Explainable AI output
-
-        *UET — 2026*
-        """
-    )
-
-
-# ── Main Content ───────────────────────────────────────
-st.markdown(
-    '<div class="main-header">'
-    '<h1>🔍 Vietnamese Fake News Detector</h1>'
-    '<p style="color:#666;font-size:16px;">Phát hiện tin giả tiếng Việt bằng AI — '
-    'ViFactCheck + PhoBERT + LLM Agent</p>'
-    '</div>',
-    unsafe_allow_html=True,
-)
-
-# ── Input Section ──────────────────────────────────────
-tab_text, tab_url = st.tabs(["📝 Dán nội dung", "🔗 Dán URL"])
-
-article_text = ""
-
-with tab_text:
-    article_text = st.text_area(
-        "Nội dung bài viết",
-        height=200,
-        max_chars=8000,
-        placeholder="Dán nội dung bài viết cần kiểm tra tại đây...",
-        key="text_input",
-    )
-
-with tab_url:
-    url_input = st.text_input(
-        "URL bài viết",
-        placeholder="https://vnexpress.net/...",
-        key="url_input",
-    )
-    if url_input and not article_text:
-        with st.spinner("🔄 Đang tải nội dung từ URL..."):
+        with st.spinner("Đang khởi chạy Sequential Adversarial Pipeline..."):
             try:
-                from sequential_adversarial.input_processor import InputProcessor
-                processor = InputProcessor()
-                result = processor.process(url_input)
-                article_text = result.get("raw_text", "")
-                if article_text:
-                    st.success(f"✅ Đã tải {len(article_text)} ký tự")
-                    st.text_area("Nội dung đã tải:", article_text[:2000], height=150, disabled=True)
-                else:
-                    st.warning("⚠️ Không thể trích xuất nội dung từ URL.")
-            except Exception as exc:
-                st.error(f"❌ Lỗi: {exc}")
-
-
-# ── Analyze Button ─────────────────────────────────────
-if st.button("🔎 Phân tích bài viết", type="primary", use_container_width=True, disabled=(not article_text)):
-    if not article_text or len(article_text.strip()) < 20:
-        st.warning("⚠️ Vui lòng nhập nội dung bài viết (ít nhất 20 ký tự).")
-    else:
-        st.divider()
-
-        # ── Run Analysis ──────────────────────────────────
-        with st.spinner("🔄 Đang phân tích... (có thể mất 10-30 giây)"):
-            agent_result = None
-            baseline_result = None
-
-            # Agent Pipeline
-            if analysis_mode in ("AI Agent Pipeline", "Cả hai (so sánh)"):
-                try:
-                    from agents.agent_pipeline import AgentPipeline
-
-                    pipeline = AgentPipeline(
-                        mock=mock_mode,
-                        use_wikipedia=use_wikipedia,
-                    )
-                    agent_result = pipeline.analyze(article_text)
-                except Exception as exc:
-                    st.error(f"❌ Agent Pipeline Error: {exc}")
-                    logger.error(f"Agent error: {exc}", exc_info=True)
-
-            # PhoBERT Baseline
-            if analysis_mode in ("PhoBERT Baseline", "Cả hai (so sánh)"):
-                try:
-                    # Try loading trained PhoBERT model
-                    from config import MODELS_ARTIFACTS_DIR, PHOBERT_MODEL_NAME
-                    import torch
-                    from model.phobert_baseline import PhoBERTBaseline
-
-                    model_path = MODELS_ARTIFACTS_DIR / "phobert_baseline_best.pt"
-                    if model_path.exists():
-                        model = PhoBERTBaseline(model_name=PHOBERT_MODEL_NAME)
-                        model.load_model(str(model_path))
-                        model.eval()
-
-                        tokenizer = PhoBERTBaseline.get_tokenizer(PHOBERT_MODEL_NAME)
-                        encoding = tokenizer(
-                            article_text[:512],
-                            max_length=256,
-                            padding="max_length",
-                            truncation=True,
-                            return_tensors="pt",
-                        )
-
-                        probs = model.predict_proba(encoding["input_ids"], encoding["attention_mask"])
-                        fake_prob = float(probs[0][1]) * 100
-                        baseline_result = {
-                            "score": int(fake_prob),
-                            "label": "Fake" if fake_prob >= 50 else "Real",
-                            "confidence": float(probs.max()),
-                        }
+                # Direct call to pipeline
+                pipeline = SequentialAdversarialPipeline(mock=mock_mode)
+                result = pipeline.run(clean_input)
+                
+                # ── RESULTS SECTION ──
+                st.divider()
+                
+                # Verdict Header (sanitize output - NFR-7.2)
+                verdict = result.verity_report.conclusion if result.verity_report else "Unknown"
+                safe_verdict = sanitize_for_display(verdict)
+                st.markdown(f'<div class="verdict-box verdict-{safe_verdict}">VERDICT: {safe_verdict.upper()}</div>', unsafe_allow_html=True)
+                
+                # Metrics Row
+                m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                m_col1.metric("Confidence", f"{result.verity_report.confidence:.0%}" if result.verity_report else "0%")
+                m_col2.metric("Manipulation Score", f"{result.overall_manipulation_score:.0%}")
+                m_col3.metric("Claims Detected", len(result.claims))
+                m_col4.metric("TF-IDF Contrast", "Agreement" if (result.tfidf_comparison and result.tfidf_comparison.agreement) else "Conflict")
+                
+                # Tabs for Stages
+                tab_report, tab_claims, tab_bias, tab_logic = st.tabs(["📝 Report", "🔍 Claims & Evidence", "⚖️ Bias Analysis", "🧬 Logic Flow"])
+                
+                with tab_report:
+                    if result.verity_report:
+                        # Sanitize markdown report (NFR-7.2)
+                        safe_report = sanitize_for_display(result.verity_report.markdown_report)
+                        st.markdown(safe_report)
                     else:
-                        st.info("ℹ️ PhoBERT model chưa được train. Dùng Agent Pipeline.")
-                except Exception as exc:
-                    st.warning(f"⚠️ PhoBERT không khả dụng: {exc}")
+                        st.warning("Không có báo cáo tổng hợp.")
+                
+                with tab_claims:
+                    for i, analysis in enumerate(result.claim_analyses):
+                        # Sanitize claim text (NFR-7.2)
+                        safe_claim_text = sanitize_for_display(analysis.claim.text[:100])
+                        safe_verdict = sanitize_for_display(analysis.verdict)
+                        with st.expander(f"Claim {i+1}: {safe_claim_text}...", expanded=(i==0)):
+                            st.write(f"**Verdict:** {safe_verdict.upper()}")
+                            if analysis.sources:
+                                st.write("**Sources:**")
+                                for s in analysis.sources:
+                                    safe_url = sanitize_for_display(s.url)
+                                    safe_stance = sanitize_for_display(s.stance)
+                                    safe_excerpt = sanitize_for_display(s.excerpt)
+                                    st.caption(f"- [{safe_stance.upper()}] {safe_url} (Reliability: {s.reliability:.2f})")
+                                    st.markdown(f"> {safe_excerpt}")
+                
+                with tab_bias:
+                    if result.bias_report:
+                        # Sanitize bias report fields (NFR-7.2)
+                        safe_framing = sanitize_for_display(result.bias_report.framing)
+                        safe_notes = sanitize_for_display(result.bias_report.adversarial_notes)
+                        distortion_text = "Yes" if result.bias_report.distortion_detected else "No"
+                        st.write(f"**Framing:** {safe_framing}")
+                        st.write(f"**Distortion Detected:** {distortion_text}")
+                        st.info(f"**Adversarial Notes:**\n{safe_notes}")
+                
+                with tab_logic:
+                    if result.mermaid_diagram:
+                        # Sanitize Mermaid diagram (NFR-7.2)
+                        safe_mermaid = sanitize_for_display(result.mermaid_diagram)
+                        st.components.v1.html(f"""
+                        <script type="module">
+                            import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+                            mermaid.initialize({{ startOnLoad: true }});
+                        </script>
+                        <pre class="mermaid">
+                            {safe_mermaid}
+                        </pre>
+                        """, height=600, scrolling=True)
+                
+                # TF-IDF Details
+                if result.tfidf_comparison:
+                    # Sanitize TF-IDF comparison output (NFR-7.2)
+                    safe_tfidf_label = sanitize_for_display(result.tfidf_comparison.tfidf_label)
+                    safe_llm_verdict = sanitize_for_display(result.tfidf_comparison.llm_verdict)
+                    safe_notes = sanitize_for_display(result.tfidf_comparison.disagreement_notes)
+                    with st.expander("🤖 Chi tiết đối soát Baseline (Stage 8)"):
+                        st.write(f"**Baseline Prediction:** {safe_tfidf_label}")
+                        st.write(f"**AI Prediction:** {safe_llm_verdict}")
+                        st.markdown(f"> {safe_notes}")
 
-        # ── Display Results ───────────────────────────────
-        if agent_result:
-            st.markdown("## 📊 Kết quả phân tích")
+            except Exception as e:
+                st.error(f"Lỗi hệ thống: {e}")
+                logger.exception("Pipeline Error")
 
-            # Score + Label row
-            col1, col2 = st.columns([2, 1])
-
-            with col1:
-                from ui.components.score_gauge import render_score_gauge
-                render_score_gauge(
-                    score=agent_result.fake_score,
-                    label=agent_result.label,
-                    confidence=agent_result.confidence,
-                )
-
-            with col2:
-                from ui.components.score_gauge import render_label_badge
-                render_label_badge(agent_result.label, agent_result.fake_score)
-
-                # Processing time
-                st.metric("⏱️ Thời gian", f"{agent_result.processing_time_seconds:.1f}s")
-
-                # Agent status
-                st.markdown("**🤖 Agent Status:**")
-                for agent, status in agent_result.agents_status.items():
-                    emoji = "✅" if status == "success" else "❌"
-                    st.caption(f"{emoji} {agent}")
-
-            st.divider()
-
-            # Explanation
-            if agent_result.explanation:
-                st.markdown("### 💡 Giải thích")
-                st.info(agent_result.explanation)
-
-            # Reasoning steps
-            if agent_result.reasoning_steps:
-                with st.expander("🧠 Các bước suy luận", expanded=False):
-                    for i, step in enumerate(agent_result.reasoning_steps):
-                        st.markdown(f"**{i+1}.** {step}")
-
-            # Columns: Word Cloud + Attention
-            col_wc, col_attn = st.columns(2)
-
-            with col_wc:
-                from ui.components.word_cloud_viz import render_word_cloud
-                render_word_cloud(article_text, title="📊 Word Cloud")
-
-            with col_attn:
-                from ui.components.attention_heatmap import render_attention_heatmap
-                render_attention_heatmap(
-                    text=article_text[:500],
-                    risk_factors=agent_result.risk_factors if agent_result.risk_factors else None,
-                )
-
-            st.divider()
-
-            # Evidence
-            from ui.components.evidence_card import render_evidence_cards, render_sources_summary
-
-            render_evidence_cards(
-                evidence_citations=agent_result.evidence_citations,
-                evidences=agent_result.evidence,
-            )
-
-            render_sources_summary(agent_result.sources_used)
-
-            # Article Summary
-            if agent_result.article_summary:
-                with st.expander("📰 Tóm tắt bài viết"):
-                    st.write(agent_result.article_summary)
-
-            # Claims extracted
-            if agent_result.claims:
-                with st.expander(f"🔍 Claims trích xuất ({len(agent_result.claims)} claims)"):
-                    for i, claim in enumerate(agent_result.claims):
-                        importance = claim.get("importance", 0.5)
-                        st.markdown(
-                            f"**Claim {i+1}** (importance: {importance:.2f}): "
-                            f"{claim.get('text', 'N/A')}"
-                        )
-
-            # Save to history
-            st.session_state.history.append({
-                "text": article_text[:100],
-                "score": agent_result.fake_score,
-                "label": agent_result.label,
-            })
-
-        # ── Comparison Mode ───────────────────────────────
-        if agent_result and baseline_result:
-            st.divider()
-            st.markdown("## ⚖️ So sánh Models")
-
-            col_agent, col_baseline = st.columns(2)
-
-            with col_agent:
-                st.markdown("### 🤖 AI Agent Pipeline")
-                label_emoji = {"Real": "🟢", "Fake": "🔴", "Suspicious": "🟡"}.get(agent_result.label, "⚪")
-                st.metric("Score", f"{agent_result.fake_score}%")
-                st.markdown(f"**Label:** {label_emoji} {agent_result.label}")
-                st.metric("Confidence", f"{agent_result.confidence:.0%}")
-
-            with col_baseline:
-                st.markdown("### 📊 PhoBERT Baseline")
-                label_emoji = {"Real": "🟢", "Fake": "🔴"}.get(baseline_result["label"], "⚪")
-                st.metric("Score", f"{baseline_result['score']}%")
-                st.markdown(f"**Label:** {label_emoji} {baseline_result['label']}")
-                st.metric("Confidence", f"{baseline_result['confidence']:.0%}")
-
-            # Agreement check
-            if agent_result.label == baseline_result["label"]:
-                st.success("✅ Hai model thống nhất kết quả!")
-            else:
-                st.warning(
-                    f"⚠️ Hai model không thống nhất: "
-                    f"Agent → {agent_result.label}, PhoBERT → {baseline_result['label']}"
-                )
-
-elif not article_text:
-    # Placeholder when no input
-    st.markdown(
-        """
-        <div style="text-align:center;padding:60px;color:#aaa;">
-            <p style="font-size:48px;">📰</p>
-            <h3>Dán nội dung hoặc URL bài viết để bắt đầu</h3>
-            <p>Hệ thống sẽ phân tích và đưa ra đánh giá về độ tin cậy</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+elif not source_input:
+    st.markdown("""
+    <div style="text-align:center; padding:100px; color:#94a3b8;">
+        <h3>Sẵn sàng phân tích tin tức</h3>
+        <p>Hệ thống sẽ chạy qua 8 giai đoạn để đảm bảo tính khách quan.</p>
+    </div>
+    """, unsafe_allow_html=True)

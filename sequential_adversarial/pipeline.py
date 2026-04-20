@@ -18,9 +18,11 @@ Luồng đi (Workflow):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -46,6 +48,107 @@ class PipelineResources:
     input_processor: Optional[InputProcessor] = None
 
 logger = logging.getLogger(__name__)
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# FR-4.2: Pipeline Checkpointing
+# ───────────────────────────────────────────────────────────────────────────────
+class CheckpointManager:
+    """Persist pipeline state after each stage for recovery (FR-4.2).
+
+    Checkpoints are saved as JSON files keyed by a hash of the source input.
+    On resume, the pipeline skips stages whose results already exist.
+    """
+
+    def __init__(self, checkpoint_dir: Optional[Path] = None):
+        from config import SA_CHECKPOINT_DIR
+        self.checkpoint_dir = checkpoint_dir or SA_CHECKPOINT_DIR
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _source_hash(source: str) -> str:
+        return hashlib.sha256(source.encode()).hexdigest()[:16]
+
+    def _checkpoint_path(self, source_hash: str, stage_name: str) -> Path:
+        return self.checkpoint_dir / f"{source_hash}_{stage_name}.json"
+
+    def save(self, source: str, stage_name: str, result: PipelineResult) -> None:
+        """Save checkpoint after a stage completes."""
+        path = self._checkpoint_path(self._source_hash(source), stage_name)
+        try:
+            path.write_text(result.model_dump_json(), encoding="utf-8")
+            logger.debug(f"Checkpoint saved: {stage_name}")
+        except Exception as exc:
+            logger.warning(f"Checkpoint save failed for {stage_name}: {exc}")
+
+    def load(self, source: str, stage_name: str) -> Optional[PipelineResult]:
+        """Load checkpoint for a stage if one exists."""
+        path = self._checkpoint_path(self._source_hash(source), stage_name)
+        if not path.exists():
+            return None
+        try:
+            return PipelineResult.model_validate_json(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning(f"Checkpoint load failed for {stage_name}: {exc}")
+            return None
+
+    def is_complete(self, source: str, stage_name: str) -> bool:
+        """Check if a stage has a valid checkpoint."""
+        return self._checkpoint_path(self._source_hash(source), stage_name).exists()
+
+    def cleanup(self, source: str) -> None:
+        """Remove all checkpoints for a source after pipeline finishes."""
+        source_hash = self._source_hash(source)
+        for path in self.checkpoint_dir.glob(f"{source_hash}_*.json"):
+            try:
+                path.unlink()
+            except Exception:
+                pass
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# NFR-8.8: Stage Watchdog
+# ───────────────────────────────────────────────────────────────────────────────
+class StageWatchdog:
+    """Timer that detects stuck/hung pipeline stages (NFR-8.8).
+
+    Starts a background timer when a stage begins. If the stage doesn't
+    complete within the timeout, the watchdog logs a warning and sets a
+    flag that the pipeline can check.
+    """
+
+    def __init__(self, timeout_seconds: int = 120):
+        from config import STAGE_TIMEOUT_SECONDS
+        self.timeout = timeout_seconds or STAGE_TIMEOUT_SECONDS
+        self._timer: Optional[threading.Timer] = None
+        self._timed_out = False
+        self._current_stage: str = ""
+
+    @property
+    def timed_out(self) -> bool:
+        return self._timed_out
+
+    def start(self, stage_name: str) -> None:
+        """Start watchdog for a stage."""
+        self._timed_out = False
+        self._current_stage = stage_name
+        self._timer = threading.Timer(self.timeout, self._on_timeout)
+        self._timer.daemon = True
+        self._timer.start()
+
+    def stop(self) -> None:
+        """Stop watchdog (stage completed in time)."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._timed_out = False
+
+    def _on_timeout(self) -> None:
+        logger.warning(
+            f"Watchdog: Stage '{self._current_stage}' exceeded "
+            f"{self.timeout}s timeout - may be stuck"
+        )
+        self._timed_out = True
 
 
 # ───────────────────────────────────────────────────────────────────────────────
@@ -138,7 +241,7 @@ Respond ONLY with valid JSON exactly matching the requested schema.
             }
 
         logger.info(f"⚡ [Stage 3] Đang thực hiện search song song cho {len(result.claims)} claims...")
-        with ThreadPoolExecutor() as executor:
+        with ThreadPoolExecutor(max_workers=min(32, max(1, len(result.claims) * 2))) as executor:
             payload = list(executor.map(_fetch_evidence, result.claims))
             
         payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -479,16 +582,25 @@ class TFIDFComparator:
 # ───────────────────────────────────────────────────────────────────────────────
 class SequentialAdversarialPipeline:
     """
-    Điểm đón dữ liệu duy nhất (Entry-point). 
-    Viết luồng giống như chơi trượt ống nước: Đầu vào là Source, nhét ống chạy tự động -> Đầu ra là Result.
+    Pipeline orchestrator with checkpointing (FR-4.2) and watchdog (NFR-8.8).
 
-    Cách sử dụng:
+    Usage:
         pipeline = SequentialAdversarialPipeline(mock=True)
         result = pipeline.run("https://news.com/fake-article")
         print(result.verity_report.conclusion)
     """
 
-    def __init__(self, llm: Optional[BaseLLMProvider] = None, mock: bool = False, resources: Optional[PipelineResources] = None):
+    def __init__(
+        self,
+        llm: Optional[BaseLLMProvider] = None,
+        mock: bool = False,
+        resources: Optional[PipelineResources] = None,
+        enable_checkpoints: bool = True,
+        enable_watchdog: bool = True,
+    ):
+        self.enable_checkpoints = enable_checkpoints
+        self.enable_watchdog = enable_watchdog
+
         if resources:
             self.llm = resources.llm
             self.input_processor = resources.input_processor or InputProcessor()
@@ -501,8 +613,7 @@ class SequentialAdversarialPipeline:
             else:
                 self.llm = llm
             self.input_processor = InputProcessor()
-            
-            # Khởi tạo Evidence Searcher (RAG System)
+
             searcher = None
             tfidf_model = None
             if not mock:
@@ -511,11 +622,10 @@ class SequentialAdversarialPipeline:
                     from agents.evidence_searcher import EvidenceSearcher
                     kb = KnowledgeBase()
                     searcher = EvidenceSearcher(knowledge_base=kb)
-                    logger.info("✅ Tích hợp EvidenceSearcher RAG thành công.")
+                    logger.info("EvidenceSearcher RAG initialized.")
                 except Exception as exc:
-                    logger.warning(f"⚠️ Khởi tạo RAG thất bại: {exc}. Stage 3 sẽ không có RAG.")
-        
-        # Array này chứa List TẤT CẢ các bước, được pass con trỏ `result` theo dòng chảy
+                    logger.warning(f"RAG init failed: {exc}. Stage 3 will run without RAG.")
+
         self.stages = [
             LeadInvestigator(self.llm),
             DataAnalyst(self.llm, evidence_searcher=searcher),
@@ -526,45 +636,45 @@ class SequentialAdversarialPipeline:
             TFIDFComparator(mock=mock, model=tfidf_model),
         ]
 
+        # FR-4.2: Checkpoint manager for resumable pipeline
+        self._checkpoint_mgr = CheckpointManager() if enable_checkpoints else None
+        # NFR-8.8: Watchdog for stuck stage detection
+        self._watchdog = StageWatchdog() if enable_watchdog else None
+
     @classmethod
     def load_resources(cls, provider_name: Optional[str] = None, mock: bool = False) -> PipelineResources:
         """Pre-load all heavy resources for the pipeline."""
-        logger.info("🏗️  [Pipeline] Đang khởi tạo tài nguyên hệ thống (Pre-loading)...")
-        
-        # 1. LLM Client
+        logger.info("Pre-loading pipeline resources...")
+
         if provider_name is None:
             from config import LLM_PROVIDER
             provider_name = LLM_PROVIDER
         llm = LLMClientFactory.create(provider_name, mock=mock)
-        
-        # 2. Input Processor
+
         input_processor = InputProcessor()
-        
-        # 3. RAG Searcher
+
         searcher = None
         if not mock:
             try:
                 from agents.knowledge_base import KnowledgeBase
                 from agents.evidence_searcher import EvidenceSearcher
                 kb = KnowledgeBase()
-                # Warm up KnowledgeBase (load encoder)
                 kb._get_encoder()
                 searcher = EvidenceSearcher(knowledge_base=kb)
-                logger.info("✅ Tải RAG Searcher thành công.")
+                logger.info("RAG Searcher loaded.")
             except Exception as exc:
-                logger.warning(f"⚠️ Không thể tải RAG Searcher: {exc}")
+                logger.warning(f"Cannot load RAG Searcher: {exc}")
 
-        # 4. TF-IDF Model
         tfidf_model = None
         if not mock:
             try:
                 from model.baseline_logreg import BaselineLogReg
                 tfidf_model = BaselineLogReg()
                 tfidf_model.load()
-                logger.info("✅ Tải TF-IDF Baseline model thành công.")
+                logger.info("TF-IDF Baseline model loaded.")
             except Exception as exc:
-                logger.warning(f"⚠️ Không thể tải TF-IDF model: {exc}")
-                
+                logger.warning(f"Cannot load TF-IDF model: {exc}")
+
         return PipelineResources(
             llm=llm,
             searcher=searcher,
@@ -573,9 +683,9 @@ class SequentialAdversarialPipeline:
         )
 
     def run(self, source: str) -> PipelineResult:
-        logger.info(f"🚀 [Pipeline] BẮT ĐẦU VẬN HÀNH: Đọc nguồn '{source[:60]}...'")
+        logger.info(f"Pipeline START: '{source[:60]}...'")
 
-        # [Stage 1] Bộ tải Raw Text từ URI hoặc Cào Web
+        # [Stage 1] Input processing
         stage1 = self.input_processor.process(source)
         result = PipelineResult(
             source=stage1["source"],
@@ -584,21 +694,79 @@ class SequentialAdversarialPipeline:
             metadata=stage1["metadata"],
         )
 
-        # Lỗi cơ học, nghỉ luôn từ đầu
         if not result.raw_text.strip():
-            logger.error("🛑 [Pipeline] BÁO ĐỘNG HỦY TRUNG TÂM: Bài viết không có chữ nào.")
-            result.investigation_summary = "Lỗi nghiêm trọng: Không thể trích xuất văn bản."
+            logger.error("Pipeline ABORT: Empty text extracted.")
+            result.investigation_summary = "Critical error: Could not extract text."
             return result
 
-        # Bơm qua từng cục tẩy rửa LLM (từ 2 đến 8) - Tấm khiên chắn Error mạnh nhất
+        # Try to resume from checkpoint (FR-4.2)
+        if self._checkpoint_mgr is not None:
+            resume_result = self._try_resume(source, result)
+            if resume_result is not None:
+                return resume_result
+
+        # Execute stages with checkpointing + watchdog
         for stage in self.stages:
+            stage_name = type(stage).__name__
+
+            # Skip if already completed via checkpoint
+            if self._checkpoint_mgr and self._checkpoint_mgr.is_complete(source, stage_name):
+                logger.info(f"[Checkpoint] Skipping {stage_name} - already completed")
+                continue
+
+            # Start watchdog timer (NFR-8.8)
+            if self._watchdog is not None:
+                self._watchdog.start(stage_name)
+
             try:
                 result = stage.process(result)
             except Exception as exc:
-                stage_name = type(stage).__name__
-                logger.error(f"🛑 [Pipeline] LỖI SỤP STAGE '{stage_name}': Bật chế độ đi ngang... Lỗi: {exc}")
+                logger.error(f"Stage '{stage_name}' FAILED: {exc}")
 
-        verdict = result.verity_report.conclusion if result.verity_report else 'N/A'
-        logger.info(f"✅ [Pipeline] XONG QUY TRÌNH. QUYẾT ĐỊNH (VERDICT) CUỐI CÙNG: {verdict}")
-        
+            # Stop watchdog
+            if self._watchdog is not None:
+                self._watchdog.stop()
+                if self._watchdog.timed_out:
+                    logger.warning(f"Stage '{stage_name}' timed out but completed")
+
+            # Save checkpoint after each stage (FR-4.2)
+            if self._checkpoint_mgr is not None:
+                self._checkpoint_mgr.save(source, stage_name, result)
+
+        # Cleanup checkpoints on success
+        if self._checkpoint_mgr is not None:
+            self._checkpoint_mgr.cleanup(source)
+
+        verdict = result.verity_report.conclusion if result.verity_report else "N/A"
+        logger.info(f"Pipeline COMPLETE. Verdict: {verdict}")
+
         return result
+
+    def _try_resume(self, source: str, initial_result: PipelineResult) -> Optional[PipelineResult]:
+        """Attempt to resume pipeline from last completed checkpoint (FR-4.2)."""
+        last_completed = None
+        for stage in self.stages:
+            stage_name = type(stage).__name__
+            if self._checkpoint_mgr.is_complete(source, stage_name):
+                last_completed = stage_name
+            else:
+                break
+
+        if last_completed is None:
+            return None
+
+        loaded = self._checkpoint_mgr.load(source, last_completed)
+        if loaded is None:
+            return None
+
+        logger.info(
+            f"[Checkpoint] Resuming from stage '{last_completed}' - "
+            f"skipping {self._stage_index(last_completed) + 1} completed stages"
+        )
+        return loaded
+
+    def _stage_index(self, stage_name: str) -> int:
+        for i, stage in enumerate(self.stages):
+            if type(stage).__name__ == stage_name:
+                return i
+        return -1

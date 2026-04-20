@@ -1,183 +1,89 @@
 """
-config.py — Shared Configuration
-==================================
-Cấu hình chung cho cả 3 người. Import từ đây thay vì hardcode paths.
+config.py — Slimmed Shared Configuration
+========================================
+Central source for all paths and parameters focusing on Vietnamese Fake News detection.
 """
-
 from pathlib import Path
+import os as _os
+
+# Load .env at import to ensure API keys are available
+from dotenv import load_dotenv
+load_dotenv()
 
 # ── Paths ──────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-DATA_DIR = PROJECT_ROOT / "data"
-RAW_DATA_DIR = DATA_DIR / "raw"
-DATASETS_DIR = DATA_DIR / "datasets"
-NORMALIZED_DIR = DATASETS_DIR / "normalized"
-AUGMENTED_DIR = DATASETS_DIR / "augmented"
-
-# ── New Dataset Pipeline (Vietnamese) ──────────────────
+# Vietnamese Dataset Pipeline
 DATASET_DIR = PROJECT_ROOT / "dataset"
 DATASET_RAW_DIR = DATASET_DIR / "raw"
 DATASET_PROCESSED_DIR = DATASET_DIR / "processed"
-DATASET_STATS_DIR = DATASET_DIR / "statistics"
 VIFACTCHECK_DIR = DATASET_RAW_DIR / "vifactcheck"
-REINTEL_DIR = DATASET_RAW_DIR / "reintel"
-COLLECTED_DIR = DATASET_RAW_DIR / "collected"
 
-MODEL_DIR = PROJECT_ROOT / "model"
-MODELS_ARTIFACTS_DIR = PROJECT_ROOT / "saved_models"  # Trained model artifacts
-
-# ── Agents ─────────────────────────────────────────────
+# Models & Agents
+MODELS_ARTIFACTS_DIR = PROJECT_ROOT / "saved_models"
 AGENTS_DIR = PROJECT_ROOT / "agents"
 KB_DIR = DATASET_PROCESSED_DIR / "knowledge_base"
 
-# ── Evaluation ─────────────────────────────────────────
+# Evaluation
 EVALUATION_DIR = PROJECT_ROOT / "evaluation"
 EVAL_RESULTS_DIR = EVALUATION_DIR / "results"
 
-# ── Docs ───────────────────────────────────────────────
-DOCS_DIR = PROJECT_ROOT / "docs"
-
-UI_DIR = PROJECT_ROOT / "ui"
-
-TESTS_DIR = PROJECT_ROOT / "tests"
-
-# ── API ────────────────────────────────────────────────
-API_HOST = "0.0.0.0"
-API_PORT = 8000
-API_URL = f"http://localhost:{API_PORT}"
-PREDICT_ENDPOINT = f"{API_URL}/predict"
-
-# ── Model ──────────────────────────────────────────────
-MAX_TEXT_LENGTH = 2048
-SUPPORTED_LANGUAGES = ("vi", "en")
-DOMAINS = ("politics", "health", "finance", "social")
+# ── Model Configuration ────────────────────────────────
 LABELS = ("fake", "real")
+MAX_TEXT_LENGTH = 2048
 
-# ── Training defaults ──────────────────────────────────
-DEFAULT_BATCH_SIZE = 16
-DEFAULT_LEARNING_RATE = 1e-5
-DEFAULT_EPOCHS = 10
-DEFAULT_MAX_SEQ_LEN = 256
-
-# ── PhoBERT Configuration ─────────────────────────────
+# PhoBERT
 PHOBERT_MODEL_NAME = "vinai/phobert-base-v2"
 PHOBERT_MAX_SEQ_LEN = 512
 PHOBERT_BATCH_SIZE = 16
-PHOBERT_LEARNING_RATE = 1e-5
-PHOBERT_EPOCHS = 10
-PHOBERT_WARMUP_RATIO = 0.1
-PHOBERT_DROPOUT = 0.3
-NUM_STYLISTIC_FEATURES = 9   # word_count, sentiment, etc.
+PHOBERT_EPOCHS = 5
+PHOBERT_LEARNING_RATE = 2e-5
+NUM_STYLISTIC_FEATURES = 9
 
-# ── Agent Configuration ────────────────────────────────
+# ── Agent & RAG ────────────────────────────────────────
 AGENT_TIMEOUT_SECONDS = 30
 AGENT_TOP_K_EVIDENCE = 5
 EMBEDDING_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 LANCEDB_TABLE_NAME = "vifactcheck_evidence"
 
-# ── Multi-LLM Provider Configuration ───────────────────────────────────────────
-import os as _os
-LLM_PROVIDER = _os.getenv("LLM_PROVIDER", "nvidia")  # gemini/gemma/qwen/grok/nvidia/openai
-OLLAMA_BASE_URL = _os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-QWEN_API_KEY = _os.getenv("QWEN_API_KEY", "")
-GROK_API_KEY = _os.getenv("GROK_API_KEY", "")
+# ── LLM Providers ──────────────────────────────────────
+LLM_PROVIDER = _os.getenv("LLM_PROVIDER", "nvidia")
+SA_MODEL_NAME = _os.getenv("SA_MODEL_NAME", "meta/llama-3.1-70b-instruct")
+
+# API Keys
 NVIDIA_API_KEY = _os.getenv("NVIDIA_API_KEY", "")
 OPENAI_API_KEY = _os.getenv("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = _os.getenv("OPENAI_BASE_URL", "")
-
-# ── Search API Configuration ────────────────────────────────────────────────────
-SEARCH_PROVIDER = _os.getenv("SEARCH_PROVIDER", "wikipedia")  # wikipedia/serper
+QWEN_API_KEY = _os.getenv("QWEN_API_KEY", "")
+GROK_API_KEY = _os.getenv("GROK_API_KEY", "")
 SERPER_API_KEY = _os.getenv("SERPER_API_KEY", "")
 
-# ── Target metrics ─────────────────────────────────────
-TARGET_BASELINE_F1 = 0.72
+# ── Targets ────────────────────────────────────────────
 TARGET_PHOBERT_F1 = 0.80
 TARGET_PROPOSED_F1 = 0.85
-TARGET_LORA_F1 = 0.85
-TARGET_ENSEMBLE_AUC = 0.90
-TARGET_LATENCY_SECONDS = 3.0
+TARGET_BASELINE_F1 = 0.72
 
-# ── Domain classification keywords (ARCH-3 fix) ──────────────────────────────
-# Vietnamese + English keywords for keyword-based domain classification
-DOMAIN_KEYWORDS = {
-    "politics": [
-        "chính trị", "politics", "chính phủ", "government", "bầu cử",
-        "election", "tổng thống", "president", "quốc hội", "parliament",
-        "đảng", "party", "nghị viện", "luật", "law", "chính sách", "policy",
-    ],
-    "health": [
-        "sức khỏe", "health", "bệnh", "disease", "vaccine", "vắc xin",
-        "bệnh viện", "hospital", "bác sĩ", "doctor", "y tế", "medical",
-        "thuốc", "medicine", "điều trị", "treatment", "dịch bệnh", "pandemic",
-    ],
-    "finance": [
-        "tài chính", "finance", "tiền", "money", "đầu tư", "investment",
-        "chứng khoán", "stock", "ngân hàng", "bank", "kinh tế", "economy",
-        "crypto", "bitcoin", "lãi suất", "interest", "vay", "loan",
-    ],
-    "social": [
-        "xã hội", "social", "gia đình", "family", "giáo dục", "education",
-        "văn hóa", "culture", "nghệ thuật", "art", "thể thao", "sport",
-        "giải trí", "entertainment", "công nghệ", "technology", "môi trường",
-    ],
-}
+# ── TF-IDF baseline ─────────────────────────────────────
+TFIDF_MAX_FEATURES = 5000
 
-# ── TF-IDF baseline configuration ───────────────────────────────────────────
-TFIDF_MAX_FEATURES = 5000  # ARCH-3 fix: magic number extraction
-
-# ── Dataset registry (ARCH-4 fix: OCP - factory pattern) ─────────────────────
-# Registry for raw dataset files: (filename, columns mapping, label, domain, lang)
-DATASET_REGISTRY = {
-    "fakenewsnet": {
-        "path": "fakenewsnet_clean.csv",
-        "columns": {"text": "text", "label": "label_binary"},
-        "label_map": {1: "fake", 0: "real"},
-        "domain": "social",
-        "lang": "en",
-    },
-    "gossipcop_fake": {
-        "path": "gossipcop_fake.csv",
-        "columns": {"text": "title"},
-        "label": "fake",
-        "domain": "social",
-        "lang": "en",
-    },
-    "gossipcop_real": {
-        "path": "gossipcop_real.csv",
-        "columns": {"text": "title"},
-        "label": "real",
-        "domain": "social",
-        "lang": "en",
-    },
-    "politifact_fake": {
-        "path": "politifact_fake.csv",
-        "columns": {"text": "title"},
-        "label": "fake",
-        "domain": "politics",
-        "lang": "en",
-    },
-    "politifact_real": {
-        "path": "politifact_real.csv",
-        "columns": {"text": "title"},
-        "label": "real",
-        "domain": "politics",
-        "lang": "en",
-    },
-}
-
-# ── Sequential Adversarial Pipeline ────────────────────────────────────────────
+# ── Sequential Adversarial Pipeline ─────────────────────
 SA_DIR = PROJECT_ROOT / "sequential_adversarial"
-
-# LLM model to use
-import os as _os
-SA_MODEL_NAME = _os.getenv("SA_MODEL_NAME", "qwen/qwen3.5-122b-a10b")
-
-# SQLite database for persistence (Stage 7)
+SA_VISUAL_DIR = PROJECT_ROOT / "visuals"
 SA_DB_PATH = SA_DIR / "data" / "verity_reports.db"
-
-# Output directory for Mermaid visual flowcharts (Stage 6)
-SA_VISUAL_DIR = SA_DIR / "data" / "visuals"
-
-# Max text length fed to the LLM pipeline
 SA_MAX_TEXT_CHARS = 8_000
+SA_CHECKPOINT_DIR = SA_DIR / "checkpoints"
+
+# ── Watchdog (NFR-8.8) ─────────────────────────────────
+STAGE_TIMEOUT_SECONDS = int(_os.getenv("STAGE_TIMEOUT_SECONDS", "120"))
+
+# ── API Keys & Base URLs ────────────────────────────────
+OPENAI_BASE_URL = _os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+# ── Timeouts (NFR-8.4) ──────────────────────────────────
+REQUEST_TIMEOUT = int(_os.getenv("REQUEST_TIMEOUT", "30"))  # seconds
+LLM_TIMEOUT = int(_os.getenv("LLM_TIMEOUT", "60"))  # seconds for LLM API calls
+DB_TIMEOUT = int(_os.getenv("DB_TIMEOUT", "10"))  # seconds for database operations
+SEARCH_TIMEOUT = int(_os.getenv("SEARCH_TIMEOUT", "15"))  # seconds for search APIs
+
+# ── Rate Limiting ────────────────────────────────────────
+RATE_LIMIT_REQUESTS_PER_MINUTE = 30
+RATE_LIMIT_BURST = 10

@@ -1,141 +1,68 @@
-# Fake News Detection System (UET Group Project)
-# 🔍 🚀 🛡️
+# Verity — Advanced Vietnamese Fake News Detection
+🛡️ 🔍 🚀
 
-Hệ thống phân loại tin giả đa ngôn ngữ (Tiếng Việt & Tiếng Anh) sử dụng kiến trúc AI tiên tiến kết hợp **PhoBERT** (với Stylistic Features) và **Adversarial LLM Pipeline** (hệ thống tác tử đa LLM tranh biện kết hợp RAG).
-
----
-
-## 📋 Mục lục
-1. [Tổng quan](#-tổng-quan)
-2. [Kiến trúc hệ thống](#-kiến-trúc-hệ-thống)
-3. [Hướng dẫn cài đặt & Chạy Code (Full)](#%EF%B8%8F-hướng-dẫn-cài-đặt--chạy-code-full)
-4. [Lộ trình & Phân công](#-phân-công-nhiệm-vụ)
-5. [Quy trình phát triển](#-quy-trình-phát-triển-git-workflow)
+**Verity** is a concise, high-performance fake news detection system specifically optimized for the Vietnamese language. It integrates **PhoBERT** deep learning baselines with a state-of-the-art **8-stage Sequential Adversarial LLM Pipeline** for explainable fact-checking.
 
 ---
 
-## 🔍 Tổng quan
-Dự án được thực hiện bởi nhóm sinh viên UET trong 7 tuần.
-- **Mục tiêu**: Phân loại tin giả và tin thật (tập trung vào ngôn ngữ Tiếng Việt), hỗ trợ giải thích lý do (Fact-checking) dựa trên bằng chứng minh bạch thông qua hệ thống RAG.
-- **Công nghệ chính**:
-  - **Data**: ViFactCheck, ReINTEL, Underthesea.
-  - **Model**: PhoBERT (Base/Pro với features), Sequential Adversarial Pipeline (LLMs), PyTorch.
-  - **Backend & Tooling**: Python 3.10+, `uv`, FastAPI, pytest.
-  - **Frontend**: Streamlit, Plotly.
+## 🏗️ Project Architecture (Post-Refactor)
+
+The project has been refactored to remove 70% of redundant code, leaving a focused 30% core:
+
+1.  **`sequential_adversarial/`**: The core 8-stage multi-agent pipeline (Lead Investigator, Data Analyst, Bias Auditor, etc.).
+2.  **`dataset/`**: Vietnamese-centric data pipeline (ViFactCheck, ReINTEL) using `underthesea`.
+3.  **`model/`**: Training scripts for PhoBERT and the TF-IDF baseline.
+4.  **`agents/`**: RAG infrastructure (LanceDB + Evidence Searcher).
+5.  **`ui/`**: Modern Streamlit interface.
+6.  **`evaluation/`**: Consolidated scripts for model comparison.
+7.  **`saved_models/`**: Storage for trained artifacts.
 
 ---
 
-## 🏗️ Kiến trúc hệ thống
-Hệ thống bao gồm 3 module chính hoạt động linh hoạt:
-1. **Data Module**: Download, thu thập (scrapy), tiền xử lý (underthesea tokenization) và trích xuất đặc trưng phong cách viết (stylistic features).
-2. **Model Module**: Huấn luyện PhoBERT (Baseline) và kết hợp đặc trưng hành vi (Pro). Kết hợp pipeline đa đặc vụ LLM (Sequential Adversarial) để phản biện và đánh giá độ uy tín.
-3. **UI Module**: Giao diện người dùng Streamlit dễ sử dụng, cung cấp phân tích trực quan.
+## 🚀 How to Run
 
----
-
-## 🛠️ Hướng dẫn cài đặt & Chạy Code (Full)
-
-Phần này hướng dẫn chi tiết quy trình từ lúc bắt đầu cho đến khi chạy được toàn bộ ứng dụng. **Chú ý:** Các lệnh chạy code sử dụng `uv run` thay vì gọi `python` trực tiếp để đảm bảo dùng đúng môi trường ảo.
-
-### 1. Chuẩn bị môi trường
-Yêu cầu hệ thống: Cần cài đặt `uv` package manager.
-
+### 1. Setup Environment
+Requires `uv` package manager.
 ```bash
-# Clone source code
-git clone https://github.com/your-repo/fake-news-detection.git
+git clone ...
 cd fake-news-detection
-
-# Cài đặt toàn bộ dependencies và môi trường ảo (.venv) bằng uv
-make install
-# Hoặc lệnh tương đương: uv sync
+uv sync
+cp .env.example .env  # Add your GOOGLE_API_KEY, NVIDIA_API_KEY, etc.
 ```
 
-### 2. Chuẩn bị dữ liệu (Data Pipeline)
-Thực hiện lần lượt các bước sau để tải và chuẩn bị dữ liệu train/test.
-
+### 2. Data Preparation
+The consolidated dataset manager handles the entire pipeline (Download -> Preprocess -> features) in one command:
 ```bash
-# Bước 2.1: Download dữ liệu gốc (ViFactCheck)
-uv run python dataset/download_datasets.py
-
-# Bước 2.2 (Tùy chọn): Thu thập thêm tin tức từ VnExpress, Tuổi Trẻ
-uv run python dataset/collect_news.py
-
-# Bước 2.3: Preprocessing (Làm sạch, Tokenize cho Tiếng Việt dùng underthesea)
-uv run python dataset/preprocess_vietnamese.py
-
-# Bước 2.4: Gộp các tập dữ liệu thành processed (Chia Train/Val/Test)
-uv run python dataset/merge_datasets.py
-
-# Bước 2.5: Trích xuất các đặc trưng văn phong (Stylistic features)
-uv run python dataset/feature_extraction.py
-```     
-> ⚠️ **Chú ý quan trọng**: Dữ liệu train/test sau khi chạy các bước trên sẽ nằm trong `dataset/processed/`. Nếu bạn bỏ qua chạy dòng **2.3** và **2.4** mà sang bước 3 luôn, bạn sẽ bắt gặp lỗi `FileNotFoundError: Data not found: dataset/processed/train.csv`.
-
-### 3. Huấn luyện mô hình (Model Training)
-Huấn luyện mô hình phân loại lõi dựa trên dữ liệu đã được xử lý.
-
-```bash
-# Huấn luyện mô hình Baseline (Chỉ sử dụng text thuần túy)
-uv run python model/train_phobert.py --variant baseline --epochs 5 --batch-size 32
-
-# Huấn luyện mô hình Pro (Văn bản + Stylistic Features từ bước 2.5)
-uv run python model/train_phobert.py --variant pro --epochs 5 --batch-size 32
-
-# Chạy Cross-Validation (Đánh giá và so sánh chuẩn)
-uv run python train_cv_simple.py
-uv run python train_cv_comparison.py
+uv run python dataset/manager.py --full
 ```
 
-### 4. Hệ thống Đa đặc vụ (LLM Pipeline)
-Thử nghiệm pipeline hệ thống tác tử nâng cao.
-
+### 3. Training Baselines
+Train the classic ML or Deep Learning baselines:
 ```bash
-# Cấu hình API key của các nhà cung cấp (NVIDIA NIM, DeepSeek, OpenAI...)
-cp .env.example .env
-# (Lưu ý: Mở file .env và điền các API keys của bạn vào)
-
-# Chạy test pipeline
-bash run_pipeline.sh
+uv run python model/baseline_logreg.py  # TF-IDF + LogReg
+uv run python model/train_phobert.py    # PhoBERT (with --features support)
 ```
 
-### 5. Khởi chạy Giao diện (Streamlit UI)
-Chạy trải nghiệm Web App:
-
+### 4. Launch the Verity Engine (UI)
 ```bash
-# Terminal 1: Chạy API Server giả lập (Mock) hỗ trợ cho UI
-make mock
-# Tương đương: uv run uvicorn api.mock:app --port 8000 --reload
-
-# Terminal 2: Chạy Web App Streamlit
-make ui
-# Tương đương: uv run streamlit run ui/app.py
+uv run streamlit run ui/app.py
 ```
-Truy cập **http://localhost:8501** trên trình duyệt để trải nghiệm.
-
-### 6. Kiểm thử & Định dạng mã nguồn (Testing & Linting)
-Dành cho quá trình phát triển (Dev):
-```bash
-make test          # Chạy toàn bộ tests bằng pytest
-make test-schemas  # Kiểm tra ràng buộc API Contract
-make lint          # Quét chuẩn lỗi code với ruff
-make format        # Định dạng nhanh code
-make clean         # Dọn dẹp cache của python và bộ nhớ đệm
-```
+Access the dashboard at **http://localhost:8501**.
 
 ---
 
-## 👥 Phân công nhiệm vụ
+## 🧬 Sequential Adversarial Pipeline (8 Stages)
 
-*Mô hình chia team lý thuyết cho dự án:*
-- **Người A (Data Pipeline):** Web crawling, làm sạch, xử lý ngôn ngữ tự nhiên Tiếng Việt (Underthesea), xây dựng Feature Engineering module.
-- **Người B (Model & AI):** Huấn luyện PhoBERT, tối ưu hiệu suất, triển khai bộ LLM Agents.
-- **Người C (Streamlit & Deployment):** Phát triển giao diện từ file thiết kế và Mock API, build chart trực quan tương tác.
+1.  **Input Processor**: URL/Text extraction.
+2.  **Lead Investigator**: Claim & Loaded Language extraction.
+3.  **Data Analyst**: RAG-based Fact Checking (Wikipedia/Local DB).
+4.  **Bias Auditor**: Adversarial critique of analysis.
+5.  **Synthesizer**: Final consensus & markdown report.
+6.  **Visual Engine**: Logic flow generation (Mermaid).
+7.  **Persistence**: SQL logging.
+8.  **TF-IDF Comparator**: Safety check against classic baseline.
 
 ---
 
-## 🔄 Quy trình phát triển (Git Workflow)
-1. **Branch Protection**: Nhánh `main` yêu cầu mở Pull Request (PR) đính kèm giải thích, có review chéo.
-2. **Branch Naming**:
-   - Tính năng mới: `feat/...` (VD: `feat/data-pipeline`, `feat/phobert-baseline`)
-   - Sửa lỗi: `fix/...`
-3. **API Contract**: Các kỹ sư thống nhất schemas giao tiếp giữa UI và Model qua thư mục `api/` nhằm độc lập phát triển.
+## 👥 Contributors
+UET Group Project — 2026. Optimized for precision, speed, and explainability.

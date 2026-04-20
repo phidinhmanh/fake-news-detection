@@ -1,334 +1,145 @@
 """
-evidence_searcher.py — Agent 2: RAG Search Evidence
-=====================================================
-Tìm evidence cho mỗi claim: ViFactCheck KB (vector search) + Wikipedia VN + Serper API.
+evidence_searcher.py — RAG Search Orchestrator
+==============================================
+Orchestrates evidence retrieval from Local KB, Wikipedia, and Google (Serper).
+
+Follows VN-4: Filter search results for Vietnamese language/relevance.
 """
 
 from __future__ import annotations
-
 import logging
-from abc import ABC, abstractmethod
-from typing import Optional
-
+import requests
 from pydantic import BaseModel, Field
+
+from security import contains_vietnamese
 
 logger = logging.getLogger(__name__)
 
+# Vietnamese language filter threshold (VN-4)
+VIETNAMESE_MIN_RATIO = 0.3  # Minimum ratio of Vietnamese characters
 
-# ── Search Provider Abstract Class ──────────────────────────────────────────────
-class SearchProvider(ABC):
-    """Abstract base class for search providers."""
-
-    @abstractmethod
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
-        """Search for evidence.
-
-        Args:
-            query: Search query.
-            top_k: Number of results to return.
-
-        Returns:
-            List of dicts: {title, text, url}
-        """
-        pass
-
-
-# ── Wikipedia VN Search ─────────────────────────────────────────────────────────
-def search_wikipedia_vn(query: str, max_results: int = 3) -> list[dict]:
-    """Tìm kiếm trên Wikipedia tiếng Việt (API miễn phí).
-
-    Args:
-        query: Từ khóa tìm kiếm.
-        max_results: Số kết quả tối đa.
-
-    Returns:
-        List of dicts: {title, text, url}
-    """
-    import requests
-
-    try:
-        # Wikipedia API search
-        headers = {"User-Agent": "FakeNewsDetection/1.0 (Contact: admin@example.com)"}
-        search_url = "https://vi.wikipedia.org/w/api.php"
-        search_params = {
-            "action": "query",
-            "list": "search",
-            "srsearch": query,
-            "srlimit": max_results,
-            "format": "json",
-            "utf8": 1,
-        }
-
-        resp = requests.get(search_url, params=search_params, headers=headers, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-
-        results = []
-        for item in data.get("query", {}).get("search", []):
-            title = item.get("title", "")
-
-            # Get article extract
-            extract_params = {
-                "action": "query",
-                "titles": title,
-                "prop": "extracts",
-                "exintro": True,
-                "explaintext": True,
-                "format": "json",
-                "utf8": 1,
-            }
-
-            ext_resp = requests.get(search_url, params=extract_params, headers=headers, timeout=10)
-            ext_data = ext_resp.json()
-
-            pages = ext_data.get("query", {}).get("pages", {})
-            for page in pages.values():
-                extract = page.get("extract", "")
-                if extract:
-                    results.append({
-                        "title": title,
-                        "text": extract[:500],
-                        "url": f"https://vi.wikipedia.org/wiki/{title.replace(' ', '_')}",
-                    })
-
-        return results
-
-    except Exception as exc:
-        logger.warning(f"⚠️ Wikipedia search failed: {exc}")
-        return []
-
-
-class WikipediaSearch(SearchProvider):
-    """Wikipedia VN search provider."""
-
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
-        """Search Wikipedia VN."""
-        return search_wikipedia_vn(query, max_results=top_k)
-
-
-class SerperSearch(SearchProvider):
-    """Serper API (serpapi.com) search provider for Google search results."""
-
-    def __init__(self, api_key: Optional[str] = None):
-        """Initialize Serper search provider.
-
-        Args:
-            api_key: Serper API key. If None, reads from SERPER_API_KEY env var.
-        """
-        import os as _os
-        from config import SERPER_API_KEY
-
-        self.api_key = api_key or SERPER_API_KEY or _os.getenv("SERPER_API_KEY", "")
-        self.base_url = "https://serpapi.com/search"
-
-    def search(self, query: str, top_k: int = 5) -> list[dict]:
-        """Search using Serper API (Google).
-
-        Args:
-            query: Search query.
-            top_k: Number of results to return.
-
-        Returns:
-            List of dicts: {title, text, url}
-        """
-        if not self.api_key:
-            logger.warning("⚠️ Serper API key not set. Set SERPER_API_KEY env var.")
-            return []
-
-        try:
-            import requests
-
-            params = {
-                "q": query,
-                "api_key": self.api_key,
-                "engine": "google",
-                "num": top_k,
-            }
-
-            resp = requests.get(self.base_url, params=params, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-
-            results = []
-            for item in data.get("organic_results", [])[:top_k]:
-                results.append({
-                    "title": item.get("title", ""),
-                    "text": item.get("snippet", "")[:500],
-                    "url": item.get("link", ""),
-                })
-
-            logger.info(f"  🌐 Serper: {len(results)} results for '{query[:50]}...'")
-            return results
-
-        except Exception as exc:
-            logger.warning(f"⚠️ Serper search failed: {exc}")
-            return []
-
-
-# ── Schema ─────────────────────────────────────────────────────────
 class EvidenceItem(BaseModel):
-    """Một mảnh evidence tìm được."""
+    text: str
+    source: str = "kb"
+    score: float = 0.0
+    stance: str = "neutral"
+    is_vietnamese: bool = False  # VN-4: Track Vietnamese content
 
-    text: str = Field(description="Nội dung evidence")
-    source: str = Field(default="knowledge_base", description="Nguồn: knowledge_base / wikipedia / serper")
-    relevance_score: float = Field(default=0.0, description="Điểm liên quan")
-    stance: str = Field(default="neutral", description="support / refute / neutral")
-
-
-class ClaimEvidence(BaseModel):
-    """Evidence cho 1 claim."""
-
-    claim_text: str = Field(description="Claim gốc")
-    evidences: list[EvidenceItem] = Field(default_factory=list)
-    has_evidence: bool = Field(default=False)
-
-
-class EvidenceSearchResult(BaseModel):
-    """Tổng hợp evidence cho tất cả claims."""
-
-    claim_evidences: list[ClaimEvidence] = Field(default_factory=list)
-    total_evidence_found: int = Field(default=0)
-    sources_used: list[str] = Field(default_factory=list)
-
-
-# ── Agent ──────────────────────────────────────────────────────────
-class EvidenceSearcher:
-    """Agent 2: Tìm evidence cho claims.
-
-    Workflow:
-        1. Search ViFactCheck knowledge base (vector similarity)
-        2. Search Wikipedia VN / Serper (keyword search)
-        3. Combine & rank results
-
-    Usage:
-        from agents.knowledge_base import KnowledgeBase
-        from agents.evidence_searcher import EvidenceSearcher
-
-        kb = KnowledgeBase()
-        searcher = EvidenceSearcher(kb)
-        result = searcher.search_claims(["Claim 1", "Claim 2"])
+def filter_vietnamese_relevance(
+    results: list[EvidenceItem],
+    min_ratio: float = VIETNAMESE_MIN_RATIO,
+) -> list[EvidenceItem]:
     """
+    Filter search results to ensure Vietnamese relevance (VN-4).
 
-    def __init__(
-        self,
-        knowledge_base=None,
-        use_wikipedia: bool = True,
-        use_serper: bool = True,
-        top_k: int = 5,
-    ):
-        """
-        Args:
-            knowledge_base: KnowledgeBase instance (optional).
-            use_wikipedia: Có search Wikipedia VN hay không.
-            use_serper: Có search Serper API hay không.
-            top_k: Số evidence tối đa per claim.
-        """
-        self.kb = knowledge_base
-        self.top_k = top_k
+    For Wikipedia/Wikipedia results, keeps Vietnamese language results.
+    For local KB, keeps all results (assumed already Vietnamese).
+    For Serper results, scores higher if containing Vietnamese.
+    """
+    filtered = []
+    for item in results:
+        # Local KB results: assume Vietnamese if not explicitly non-Vietnamese
+        if item.source == "local_kb":
+            filtered.append(item)
+            continue
 
-        # Initialize search providers
-        self._providers: list[SearchProvider] = []
-        if use_wikipedia:
-            self._providers.append(WikipediaSearch())
-        if use_serper:
-            serper = SerperSearch()
-            # Only add if API key is available
-            if serper.api_key:
-                self._providers.append(serper)
-            else:
-                logger.info("ℹ️ Serper API key not set. skipping external Google search (will stick to Wikipedia + Local KB).")
+        # Check if content contains Vietnamese
+        has_vietnamese = contains_vietnamese(item.text)
 
-    def search_single_claim(self, claim_text: str) -> ClaimEvidence:
-        """Tìm evidence cho 1 claim.
+        if has_vietnamese:
+            # High confidence for Vietnamese content
+            item.is_vietnamese = True
+            filtered.append(item)
+        elif item.source.startswith("wiki"):
+            # For Wikipedia, prefer Vietnamese Wikipedia
+            if ".vi." in item.source or "vi.wikipedia" in item.source:
+                item.is_vietnamese = True
+                filtered.append(item)
+            # Skip English Wikipedia for Vietnamese claims
+        else:
+            # For Serper/other, include but mark as non-Vietnamese
+            item.is_vietnamese = False
+            filtered.append(item)
 
-        Args:
-            claim_text: Nội dung claim.
+    logger.debug(f"Filtered to {len(filtered)} Vietnamese-relevant results")
+    return filtered
 
-        Returns:
-            ClaimEvidence object.
-        """
-        evidences: list[EvidenceItem] = []
+class EvidenceSearcher:
+    """Orchestrates search across multiple providers."""
 
-        # 1. Search Knowledge Base
+    def __init__(self, kb=None, use_wiki: bool = True, use_serper: bool = True):
+        from config import SERPER_API_KEY
+        self.kb = kb
+        self.use_wiki = use_wiki
+        self.serper_key = SERPER_API_KEY if use_serper else None
+
+    def _wiki_search(self, query: str, limit: int = 2) -> list[dict]:
+        """Search Vietnamese Wikipedia with timeout (NFR-8.4)."""
+        try:
+            from config import SEARCH_TIMEOUT
+            url = "https://vi.wikipedia.org/w/api.php"
+            params = {"action": "query", "list": "search", "srsearch": query, "srlimit": limit, "format": "json"}
+            items = requests.get(url, params=params, timeout=SEARCH_TIMEOUT).json().get("query", {}).get("search", [])
+            results = []
+            for item in items:
+                title = item["title"]
+                ex = requests.get(
+                    url,
+                    params={"action": "query", "titles": title, "prop": "extracts", "exintro": 1, "explaintext": 1, "format": "json"},
+                    timeout=SEARCH_TIMEOUT
+                ).json()
+                page = next(iter(ex["query"]["pages"].values()))
+                if "extract" in page:
+                    results.append({"text": f"Wikipedia: {title} - {page['extract'][:300]}", "source": f"wiki:{title}"})
+            return results
+        except Exception as e:
+            logger.warning(f"Wikipedia search failed: {e}")
+            return []
+
+    def _serper_search(self, query: str, limit: int = 2) -> list[dict]:
+        """Search Google via Serper with timeout (NFR-8.4)."""
+        if not self.serper_key:
+            return []
+        try:
+            from config import SEARCH_TIMEOUT
+            url = "https://google.serper.dev/search"
+            res = requests.post(
+                url,
+                json={"q": query, "num": limit},
+                headers={"X-API-KEY": self.serper_key},
+                timeout=SEARCH_TIMEOUT
+            ).json()
+            return [{"text": f"Google: {r.get('title')} - {r.get('snippet')}", "source": r.get("link")} for r in res.get("organic", [])]
+        except Exception as e:
+            logger.warning(f"Serper search failed: {e}")
+            return []
+
+    def search_claim(self, claim: str, top_k: int = 3) -> list[EvidenceItem]:
+        """Search for evidence supporting/refuting a claim (VN-4)."""
+        all_ev = []
+        # 1. Local KB
         if self.kb:
-            try:
-                kb_results = self.kb.search(claim_text, top_k=self.top_k)
-                for r in kb_results:
-                    evidences.append(EvidenceItem(
-                        text=r.get("evidence", r.get("claim", "")),
-                        source="vifactcheck_kb",
-                        relevance_score=1.0 - min(r.get("score", 1.0), 1.0),  # Convert distance to score
-                        stance=self._infer_stance(r.get("label", "neutral")),
-                    ))
-                logger.info(f"  📚 KB: {len(kb_results)} results for '{claim_text[:50]}...'")
-            except Exception as exc:
-                logger.warning(f"⚠️ KB search failed: {exc}")
+            for r in self.kb.search(claim, top_k=top_k):
+                all_ev.append(EvidenceItem(
+                    text=r["evidence"],
+                    source="local_kb",
+                    score=1-r["score"],
+                    is_vietnamese=True  # Local KB assumed Vietnamese
+                ))
 
-        # 2. Search external providers (Wikipedia, Serper)
-        for provider in self._providers:
-            provider_name = provider.__class__.__name__
-            try:
-                results = provider.search(claim_text, top_k=3)
-                for r in results:
-                    evidences.append(EvidenceItem(
-                        text=f"[{provider_name}] {r['title']}: {r['text']}",
-                        source=r.get("url", provider_name.lower()),
-                        relevance_score=0.5,  # Default relevance
-                        stance="neutral",
-                    ))
-                logger.info(f"  📖 {provider_name}: {len(results)} results")
-            except Exception as exc:
-                logger.warning(f"⚠️ {provider_name} search failed: {exc}")
+        # 2. External
+        if self.use_wiki:
+            for r in self._wiki_search(claim):
+                all_ev.append(EvidenceItem(text=r["text"], source=r["source"], score=0.5))
 
-        # Sort by relevance
-        evidences.sort(key=lambda e: e.relevance_score, reverse=True)
-        evidences = evidences[:self.top_k]
+        if self.serper_key:
+            for r in self._serper_search(claim):
+                all_ev.append(EvidenceItem(text=r["text"], source=r["source"], score=0.5))
 
-        return ClaimEvidence(
-            claim_text=claim_text,
-            evidences=evidences,
-            has_evidence=len(evidences) > 0,
-        )
+        # 3. Filter for Vietnamese relevance (VN-4)
+        all_ev = filter_vietnamese_relevance(all_ev)
 
-    def search_claims(self, claims: list[str]) -> EvidenceSearchResult:
-        """Tìm evidence cho nhiều claims (Song song).
+        return sorted(all_ev, key=lambda x: x.score, reverse=True)[:top_k]
 
-        Args:
-            claims: List of claim strings.
-
-        Returns:
-            EvidenceSearchResult object.
-        """
-        logger.info(f"🔎 [Agent 2] Searching evidence for {len(claims)} claims (Parallel)...")
-
-        from concurrent.futures import ThreadPoolExecutor
-        
-        with ThreadPoolExecutor() as executor:
-            claim_evidences = list(executor.map(self.search_single_claim, claims))
-
-        sources_used: set[str] = set()
-        total = 0
-        for ce in claim_evidences:
-            total += len(ce.evidences)
-            for e in ce.evidences:
-                sources_used.add(e.source)
-
-        logger.info(f"✅ [Agent 2] Found {total} total evidence pieces from {len(sources_used)} sources")
-
-        return EvidenceSearchResult(
-            claim_evidences=claim_evidences,
-            total_evidence_found=total,
-            sources_used=list(sources_used),
-        )
-
-    @staticmethod
-    def _infer_stance(label: str) -> str:
-        """Map ViFactCheck label → stance."""
-        mapping = {
-            "real": "support",
-            "fake": "refute",
-            "suspicious": "neutral",
-            "supported": "support",
-            "refuted": "refute",
-        }
-        return mapping.get(label.lower(), "neutral")
+    def search_multi(self, claims: list[str]) -> dict[str, list[EvidenceItem]]:
+        return {c: self.search_claim(c) for c in claims}

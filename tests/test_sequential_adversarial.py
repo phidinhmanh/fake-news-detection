@@ -32,40 +32,7 @@ from sequential_adversarial.pipeline import (
 logging.basicConfig(level=logging.INFO)
 
 
-# ── Fixtures ────────────────────────────────────────────────────────────────────
-@pytest.fixture()
-def mock_llm() -> LLMClient:
-    return LLMClient(mock=True)
-
-
-@pytest.fixture()
-def tmp_db(tmp_path) -> Path:
-    return tmp_path / "test_reports.db"
-
-
-@pytest.fixture()
-def base_result() -> PipelineResult:
-    return PipelineResult(
-        source="https://test.com/article",
-        raw_text=(
-            "The stock market will crash by 50% next week! "
-            "Government officials are hiding the truth from the public."
-        ),
-        input_type="url",
-        metadata={"domain": "test.com"},
-    )
-
-
-@pytest.fixture()
-def full_mock_pipeline(tmp_path, tmp_db) -> SequentialAdversarialPipeline:
-    """Pipeline with mock LLM and temp directories."""
-    pipeline = SequentialAdversarialPipeline(mock=True)
-    # Override Persistence and VisualEngine to use tmp dirs
-    vis = VisualEngine(output_dir=tmp_path / "visuals")
-    pers = Persistence(db_path=tmp_db)
-    pipeline.stages[-2] = vis
-    pipeline.stages[-1] = pers
-    return pipeline
+# ── Stage 1: InputProcessor ────────────────────────────────────────────────────
 
 
 # ── Stage 1: InputProcessor ────────────────────────────────────────────────────
@@ -140,6 +107,11 @@ class TestDataAnalyst:
             for src in ca.sources:
                 assert 0.0 <= src.reliability <= 1.0
 
+    def test_empty_claims_handled_gracefully(self, mock_llm, base_result):
+        base_result.claims = []
+        result = DataAnalyst(mock_llm).process(base_result)
+        assert result.claim_analyses == []
+
 
 # ── Stage 4: BiasAuditor ───────────────────────────────────────────────────────
 class TestBiasAuditor:
@@ -196,6 +168,12 @@ class TestVisualEngine:
         if result.visual_flowchart_path:
             assert Path(result.visual_flowchart_path).exists()
 
+    def test_truncate_function(self):
+        long_str = "A" * 100
+        truncated = VisualEngine._truncate(long_str, 10)
+        assert truncated.endswith("...")
+        assert len(truncated) <= 13 # 10 + 3
+
 
 # ── Stage 7: Persistence ───────────────────────────────────────────────────────
 class TestPersistence:
@@ -222,6 +200,12 @@ class TestPersistence:
         all_records = pers.fetch_all()
         assert len(all_records) >= 1
 
+    def test_persistence_handles_missing_report(self, tmp_db, base_result):
+        base_result.verity_report = None
+        pers = Persistence(db_path=tmp_db)
+        result = pers.process(base_result)
+        assert result.db_record_id is not None
+
 
 # ── Full Pipeline Integration ──────────────────────────────────────────────────
 class TestFullPipeline:
@@ -239,11 +223,15 @@ class TestFullPipeline:
         assert result.mermaid_diagram is not None
         assert result.saved_id is not None
 
-    def test_empty_text_handled_gracefully(self, full_mock_pipeline):
-        """Pipeline should not crash on empty input."""
-        result = full_mock_pipeline.run("")
-        # Should return without crashing; claims may be empty
-        assert isinstance(result, PipelineResult)
+    def test_stage_exception_resilience(self, full_mock_pipeline, base_result):
+        """Pipeline should continue if one stage fails."""
+        class FailingStage:
+            def process(self, r): raise Exception("Failing Stage")
+        
+        full_mock_pipeline.stages.insert(0, FailingStage())
+        # Should not crash
+        result = full_mock_pipeline.run("Test text")
+        assert result.raw_text == "Test text"
 
     def test_pipelineresult_is_serializable(self, full_mock_pipeline):
         """PipelineResult must be JSON-serializable (for API responses)."""
@@ -252,6 +240,20 @@ class TestFullPipeline:
         serialized = result.model_dump_json()
         data = json.loads(serialized)
         assert isinstance(data, dict)
+
+    def test_pipeline_load_resources(self):
+        resources = SequentialAdversarialPipeline.load_resources(mock=True)
+        assert isinstance(resources.llm, LLMClient)
+        assert resources.llm.is_mock is True
+        # Verify it created a pipeline correctly
+        pipeline = SequentialAdversarialPipeline(resources=resources)
+        assert pipeline.llm == resources.llm
+        
+    def test_empty_text_handled_gracefully(self, full_mock_pipeline):
+        """Pipeline should not crash on empty input."""
+        result = full_mock_pipeline.run("")
+        # Should return without crashing; claims may be empty
+        assert isinstance(result, PipelineResult)
 
 
 # ── LLMClient / extract_json ───────────────────────────────────────────────────
@@ -274,3 +276,34 @@ class TestExtractJson:
     def test_malformed_returns_error_dict(self):
         with pytest.raises(ValueError):
             extract_json("this is not json at all @@@@")
+
+
+# ── Stage 8: TF-IDF Comparator ───────────────────────────────────────────────
+from sequential_adversarial.pipeline import TFIDFComparator
+from sequential_adversarial.models import VerityReport
+
+class TestTFIDFComparator:
+    def test_agreement_logic(self, base_result):
+        base_result.verity_report = VerityReport(conclusion="False", confidence=0.8)
+        # Mocking the comparison results
+        stage = TFIDFComparator(mock=True)
+        result = stage.process(base_result)
+        assert result.tfidf_comparison is not None
+        # In mock mode, it always returns 'fake' with 0.72 prob
+        # LLM 'False' == TF-IDF 'fake' => Agreement True
+        assert result.tfidf_comparison.agreement is True
+
+    def test_disagreement_logic(self, base_result):
+        base_result.verity_report = VerityReport(conclusion="True", confidence=0.9)
+        stage = TFIDFComparator(mock=True)
+        result = stage.process(base_result)
+        # LLM 'True' != TF-IDF 'fake' => Agreement False
+        assert result.tfidf_comparison.agreement is False
+        assert "XUNG ĐỘT" in result.tfidf_comparison.disagreement_notes
+
+    def test_no_model_returns_gracefully(self, base_result):
+        stage = TFIDFComparator(mock=False)
+        stage._load_model = lambda: None # Mock to do nothing
+        stage._model = None
+        result = stage.process(base_result)
+        assert result.tfidf_comparison is None

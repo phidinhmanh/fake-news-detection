@@ -18,8 +18,12 @@ import logging
 import os
 import random
 import time
+import sys
 from pathlib import Path
 from typing import Optional
+
+# Add project root to path BEFORE importing local modules
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 import pandas as pd
@@ -27,6 +31,8 @@ import torch
 import torch.nn as nn
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.utils.class_weight import compute_class_weight
+
+import transformers
 from transformers import (
     AutoModelForSequenceClassification,
     AutoTokenizer,
@@ -34,9 +40,9 @@ from transformers import (
     TrainingArguments,
 )
 
-import sys
-# Add project root to path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# Project imports
+from dataset.feature_extraction import FEATURE_NAMES, extract_features_batch
+from model.phobert import PhoBERTBaseline, PhoBERTWithFeatures, PhoBERTDataset
 
 from config import (
     DATASET_PROCESSED_DIR,
@@ -57,7 +63,6 @@ def set_seed(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    import transformers
     transformers.set_seed(seed)
     logger.info(f"🌱 Seed set to {seed}")
 
@@ -82,7 +87,6 @@ def load_data(split: str, with_features: bool = False) -> pd.DataFrame:
 def compute_metrics(eval_pred):
     predictions, labels = eval_pred
     
-    # Check if predictions is a tuple (e.g. from custom model outputs)
     if isinstance(predictions, tuple):
         predictions = predictions[0]
 
@@ -111,8 +115,6 @@ class WeightedTrainer(Trainer):
         labels = inputs.get("labels")
         outputs = model(**inputs)
 
-        # HF AutoModelForSequenceClassification returns an object with logits and loss
-        # Phượng BERTWithFeatures returns a dictionary with logits and loss.
         if isinstance(outputs, dict):
             logits = outputs.get("logits")
         else:
@@ -121,7 +123,6 @@ class WeightedTrainer(Trainer):
         if labels is not None:
             device = getattr(model, "device", next(model.parameters()).device)
             weight = self.class_weights.to(device) if self.class_weights is not None else None
-            # Use label smoothing from TrainingArguments and class weights
             loss_fct = nn.CrossEntropyLoss(weight=weight, label_smoothing=self.args.label_smoothing_factor)
             loss = loss_fct(logits.view(-1, 2), labels.view(-1))
         else:
@@ -158,7 +159,6 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name)
 
-    # Load data
     df_train = load_data("train", with_features=with_features)
     df_val = load_data("val", with_features=with_features)
 
@@ -169,18 +169,12 @@ def main() -> None:
         logger.error(f"❌ Column '{label_col}' not found. Run merge_datasets.py first.")
         return
 
-    # Tính toán class weights (giúp cân bằng dữ liệu nếu bị lệch)
     classes = np.unique(df_train[label_col])
     class_w = compute_class_weight(class_weight="balanced", classes=classes, y=df_train[label_col])
     class_weights = torch.tensor(class_w, dtype=torch.float32)
     logger.info(f"⚖️ Computed class weights: {class_weights.tolist()}")
 
-    # Setup Datasets & Model
     if with_features:
-        from model.phobert_with_features import PhoBERTFeaturesDataset, PhoBERTWithFeatures
-        from dataset.feature_extraction import FEATURE_NAMES, extract_features_batch
-        
-        # Pipeline check to auto-extract features if absent
         if not all(f in df_train.columns for f in FEATURE_NAMES):
             logger.info("📊 Extracting features on-the-fly...")
             train_features = extract_features_batch(df_train[text_col].tolist())
@@ -195,11 +189,11 @@ def main() -> None:
             train_features = df_train[FEATURE_NAMES].values.astype(np.float32)
             val_features = df_val[FEATURE_NAMES].values.astype(np.float32)
 
-        train_dataset = PhoBERTFeaturesDataset(
+        train_dataset = PhoBERTDataset(
             texts=df_train[text_col].tolist(), labels=df_train[label_col].tolist(),
             features=train_features, tokenizer=tokenizer, max_length=args.max_seq_len,
         )
-        val_dataset = PhoBERTFeaturesDataset(
+        val_dataset = PhoBERTDataset(
             texts=df_val[text_col].tolist(), labels=df_val[label_col].tolist(),
             features=val_features, tokenizer=tokenizer, max_length=args.max_seq_len,
         )
@@ -207,7 +201,6 @@ def main() -> None:
         model = PhoBERTWithFeatures(model_name=args.model_name, num_labels=2, class_weights=class_weights, dropout=args.dropout)
         
     else:
-        from model.phobert_baseline import PhoBERTDataset
         train_dataset = PhoBERTDataset(
             texts=df_train[text_col].tolist(), labels=df_train[label_col].tolist(),
             tokenizer=tokenizer, max_length=args.max_seq_len,
@@ -223,7 +216,6 @@ def main() -> None:
             hidden_dropout_prob=args.dropout,
             attention_probs_dropout_prob=args.dropout
         )
-
 
     MODELS_ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     out_dir_name = f"phobert_{args.variant}_{args.model_name.replace('/', '-')}"
@@ -248,7 +240,7 @@ def main() -> None:
         fp16=torch.cuda.is_available(),
         seed=args.seed,
         report_to="none",
-        remove_unused_columns=False, # Quan trọng với PhoBERTFeaturesDataset trả về custom dictionary
+        remove_unused_columns=False,
     )
 
     trainer = WeightedTrainer(
@@ -267,11 +259,9 @@ def main() -> None:
 
     train_result = trainer.train()
 
-    # Save Best Model
     final_model_path = output_dir / "best_model"
     trainer.save_model(str(final_model_path))
     
-    # Log results
     eval_metrics = trainer.evaluate()
     
     history_path = output_dir / "training_history.json"
